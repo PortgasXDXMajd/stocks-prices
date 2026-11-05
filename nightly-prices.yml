@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       only_date:
-        description: "Force one day (YYYY-MM-DD); empty = backfill the last 10 days"
+        description: "Force one day (YYYY-MM-DD); empty = fill every missing day of the last month"
         required: false
         default: ""
 
@@ -27,10 +27,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Fetch daily bars from Alpaca
+      - name: Fetch daily bars (Yahoo, Stooq fallback; no keys)
         env:
-          ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
-          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           ONLY_DATE: ${{ github.event.inputs.only_date }}
         run: python3 fetch_prices.py
       - name: Commit new files

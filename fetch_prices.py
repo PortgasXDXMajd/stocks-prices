@@ -1,172 +1,179 @@
 #!/usr/bin/env python3
-"""Nightly price snapshot for the Morning Picks paper tracker.
+"""Nightly price snapshot for the Morning Picks paper tracker. No API keys.
 
-Writes one CSV per trading day:
-  data/stocks/YYYY-MM-DD.csv   US stocks/ETFs, daily bar (raw, unadjusted)
-  data/crypto/YYYY-MM-DD.csv   Alpaca crypto /USD pairs, daily bar
+Source: Yahoo Finance chart endpoint (public, no key); Stooq CSV as fallback.
+Universe: S&P 500 + Nasdaq-100 + extra_symbols.txt (stocks), crypto_symbols.txt (crypto).
 
+Writes one CSV per US trading day (the dates QQQ traded):
+  data/stocks/YYYY-MM-DD.csv
+  data/crypto/YYYY-MM-DD.csv   (crypto daily bar of that UTC date, symbols as "SOL/USD")
 Columns: symbol,open,high,low,close,volume,bar_time_utc,feed
 
-Missing days within the last BACKFILL_DAYS calendar days are filled in, so a
-failed night repairs itself on the next run. Days already on disk are skipped.
-
-Env: ALPACA_KEY_ID, ALPACA_SECRET_KEY (Alpaca paper keys are fine).
-Optional: BACKFILL_DAYS (default 10), ONLY_DATE (YYYY-MM-DD, force one day).
-Stdlib only.
+Every run downloads the last month per symbol and writes any trading day that
+is missing on disk, so failed nights repair themselves. Stdlib only.
+Optional env: ONLY_DATE=YYYY-MM-DD to rewrite one day.
 """
-import csv, datetime as dt, json, os, sys, time, urllib.parse, urllib.request, urllib.error
+import csv, datetime as dt, io, json, os, re, sys, time, urllib.request, urllib.error
 
-KEY = os.environ.get("ALPACA_KEY_ID", "")
-SECRET = os.environ.get("ALPACA_SECRET_KEY", "")
-TRADING = "https://paper-api.alpaca.markets"
-DATA = "https://data.alpaca.markets"
-BACKFILL_DAYS = int(os.environ.get("BACKFILL_DAYS", "10"))
-ONLY_DATE = os.environ.get("ONLY_DATE", "").strip()
-MIN_CLOSE = 1.0          # keep stocks with close >= $1 ...
-MIN_VOLUME = 100_000     # ... and volume >= 100k shares (plus ALWAYS_KEEP)
-ALWAYS_KEEP = {"QQQ", "SPY"}
-BATCH = 100
 ROOT = os.path.dirname(os.path.abspath(__file__))
+ONLY_DATE = os.environ.get("ONLY_DATE", "").strip()
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+      "Accept": "*/*"}
+SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
+NDX_WIKI = "https://en.wikipedia.org/wiki/Nasdaq-100"
+ALWAYS = ["QQQ", "SPY"]
 
 
-def get(url, params=None, auth=True, tries=4):
-    if params:
-        url += "?" + urllib.parse.urlencode(params, safe=",/")
-    headers = {"Accept": "application/json", "User-Agent": "morning-picks-prices"}
-    if auth:
-        headers["APCA-API-KEY-ID"] = KEY
-        headers["APCA-API-SECRET-KEY"] = SECRET
+def http(url, tries=4, pause=2.0):
     for i in range(tries):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as r:
-                return json.loads(r.read().decode())
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
+                return r.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
-            body = e.read().decode(errors="replace")[:300]
-            if e.code == 429 or e.code >= 500:
-                time.sleep(3 * (i + 1)); continue
-            raise RuntimeError(f"HTTP {e.code} {url.split('?')[0]}: {body}")
-        except urllib.error.URLError:
-            time.sleep(3 * (i + 1))
-    raise RuntimeError(f"giving up on {url.split('?')[0]}")
+            if e.code in (429, 500, 502, 503, 504):
+                time.sleep(pause * (i + 1) * 2); continue
+            return None
+        except Exception:
+            time.sleep(pause * (i + 1))
+    return None
 
 
-def trading_days():
-    today = dt.date.today()
-    if ONLY_DATE:
-        return [ONLY_DATE]
-    start = (today - dt.timedelta(days=BACKFILL_DAYS)).isoformat()
-    cal = get(f"{TRADING}/v2/calendar", {"start": start, "end": today.isoformat()})
-    now_utc = dt.datetime.now(dt.timezone.utc)
-    days = []
-    for d in cal:
-        # only days whose session has closed (close time is US/Eastern; 22:00 UTC is safely after)
-        close_utc = dt.datetime.fromisoformat(d["date"]).replace(tzinfo=dt.timezone.utc) + dt.timedelta(hours=22)
-        if close_utc <= now_utc:
-            days.append(d["date"])
-    return days
+def read_list(name):
+    p = os.path.join(ROOT, name)
+    if not os.path.exists(p):
+        return []
+    return [l.strip().upper() for l in open(p) if l.strip() and not l.startswith("#")]
 
 
-def stock_symbols():
-    assets = get(f"{TRADING}/v2/assets", {"status": "active", "asset_class": "us_equity"})
-    return sorted({a["symbol"] for a in assets if a.get("tradable") and "/" not in a["symbol"] and "." not in a["symbol"]})
+def universe():
+    syms = set(ALWAYS) | set(read_list("extra_symbols.txt"))
+    txt = http(SP500_CSV)
+    if txt:
+        for row in csv.DictReader(io.StringIO(txt)):
+            if row.get("Symbol"):
+                syms.add(row["Symbol"].strip().upper())
+    else:
+        print("warning: S&P 500 list unavailable")
+    html = http(NDX_WIKI)
+    if html:
+        m = re.search(r'id="constituents".*?</table>', html, re.S)
+        if m:
+            for t in re.findall(r"<tr>\s*<td>(?:<a[^>]*>)?([A-Z.]{1,6})(?:</a>)?\s*</td>", m.group(0)):
+                syms.add(t)
+    else:
+        print("warning: Nasdaq-100 list unavailable")
+    return sorted(syms)
 
 
-def crypto_symbols():
-    assets = get(f"{TRADING}/v2/assets", {"status": "active", "asset_class": "crypto"})
-    return sorted({a["symbol"] for a in assets if a["symbol"].endswith("/USD")})
+def yahoo(symbol):
+    """Daily bars for the last month: {date: (o,h,l,c,v,ts_iso)}"""
+    ysym = symbol.replace(".", "-")
+    for host in ("query1", "query2"):
+        txt = http(f"https://{host}.finance.yahoo.com/v8/finance/chart/{ysym}?range=1mo&interval=1d&includePrePost=false")
+        if not txt:
+            continue
+        try:
+            res = json.loads(txt)["chart"]["result"][0]
+            ts = res["timestamp"]
+            q = res["indicators"]["quote"][0]
+            off = res["meta"].get("gmtoffset", 0)
+        except Exception:
+            continue
+        out = {}
+        for i, t in enumerate(ts):
+            o, h, l, c, v = (q[k][i] for k in ("open", "high", "low", "close", "volume"))
+            if None in (o, h, l, c):
+                continue
+            day = dt.datetime.fromtimestamp(t + off, dt.timezone.utc).date().isoformat()
+            iso = dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            out[day] = (round(o, 6), round(h, 6), round(l, 6), round(c, 6), v or 0, iso)
+        if out:
+            return out, "yahoo"
+    return {}, None
 
 
-def stock_bars(symbols, day, feed):
+def stooq(symbol, suffix):
+    txt = http(f"https://stooq.com/q/d/l/?s={symbol.lower()}{suffix}&i=d")
     out = {}
-    end = (dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
-    for i in range(0, len(symbols), BATCH):
-        chunk = symbols[i:i + BATCH]
-        token = None
-        while True:
-            p = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": day, "end": end,
-                 "adjustment": "raw", "feed": feed, "limit": 10000}
-            if token:
-                p["page_token"] = token
-            j = get(f"{DATA}/v2/stocks/bars", p)
-            for sym, bars in (j.get("bars") or {}).items():
-                for b in bars:
-                    if b["t"][:10] == day:
-                        out[sym] = b
-            token = j.get("next_page_token")
-            if not token:
-                break
-        time.sleep(0.35)  # stay well under 200 requests/min
-    return out
+    if txt and txt.startswith("Date"):
+        for row in list(csv.DictReader(io.StringIO(txt)))[-30:]:
+            try:
+                out[row["Date"]] = (float(row["Open"]), float(row["High"]), float(row["Low"]),
+                                    float(row["Close"]), int(float(row.get("Volume") or 0)), row["Date"] + "T00:00:00Z")
+            except Exception:
+                pass
+    return (out, "stooq") if out else ({}, None)
 
 
-def crypto_bars(symbols, day):
-    out = {}
-    end = (dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
-    for i in range(0, len(symbols), BATCH):
-        chunk = symbols[i:i + BATCH]
-        token = None
-        while True:
-            p = {"symbols": ",".join(chunk), "timeframe": "1Day", "start": day, "end": end, "limit": 10000}
-            if token:
-                p["page_token"] = token
-            j = get(f"{DATA}/v1beta3/crypto/us/bars", p, auth=False)
-            for sym, bars in (j.get("bars") or {}).items():
-                for b in bars:
-                    if b["t"][:10] == day:
-                        out[sym] = b
-            token = j.get("next_page_token")
-            if not token:
-                break
-    return out
+def series(symbol, crypto=False):
+    data, src = yahoo(symbol + "-USD" if crypto else symbol)
+    if not data:
+        data, src = stooq(symbol, ".v" if crypto else ".us")
+    time.sleep(0.25)
+    return data, src
 
 
-def write(path, rows, feed):
+def write(path, rows):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", newline="") as f:
+    with open(path + ".tmp", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["symbol", "open", "high", "low", "close", "volume", "bar_time_utc", "feed"])
         for sym in sorted(rows):
-            b = rows[sym]
-            w.writerow([sym, b["o"], b["h"], b["l"], b["c"], b["v"], b["t"], feed])
-    os.replace(tmp, path)
+            o, h, l, c, v, iso, src = rows[sym]
+            w.writerow([sym, o, h, l, c, v, iso, src])
+    os.replace(path + ".tmp", path)
 
 
 def main():
-    if not KEY or not SECRET:
-        sys.exit("ALPACA_KEY_ID / ALPACA_SECRET_KEY not set")
-    days = trading_days()
-    print("trading days in window:", days)
-    stocks = cryptos = None
-    for day in days:
-        sp = os.path.join(ROOT, "data", "stocks", f"{day}.csv")
-        cp = os.path.join(ROOT, "data", "crypto", f"{day}.csv")
-        if not os.path.exists(sp) or ONLY_DATE:
-            stocks = stocks or stock_symbols()
-            feed = "sip"
-            try:
-                bars = stock_bars(stocks, day, feed)
-            except RuntimeError as e:
-                print("SIP refused, falling back to IEX:", e)
-                feed = "iex"
-                bars = stock_bars(stocks, day, feed)
-            kept = {s: b for s, b in bars.items()
-                    if s in ALWAYS_KEEP or (b["c"] >= MIN_CLOSE and b["v"] >= MIN_VOLUME)}
-            if "QQQ" not in kept:
-                print(f"{day}: no QQQ bar yet, skipping (data not final?)")
-            else:
-                write(sp, kept, feed)
-                print(f"{day}: stocks {len(kept)} of {len(bars)} written ({feed})")
-        if not os.path.exists(cp) or ONLY_DATE:
-            cryptos = cryptos or crypto_symbols()
-            bars = crypto_bars(cryptos, day)
-            if "BTC/USD" in bars:
-                write(cp, bars, "alpaca-crypto-us")
-                print(f"{day}: crypto {len(bars)} written")
-    latest = sorted(f[:-4] for f in os.listdir(os.path.join(ROOT, "data", "stocks")) if f.endswith(".csv")) \
-        if os.path.isdir(os.path.join(ROOT, "data", "stocks")) else []
+    qqq, _ = series("QQQ")
+    if not qqq:
+        sys.exit("QQQ history unavailable from every source; try again later")
+    now = dt.datetime.now(dt.timezone.utc)
+    today = now.date().isoformat()
+    # only completed sessions: today's bar counts only after 22:00 UTC
+    days = sorted(d for d in qqq if d < today or (d == today and now.hour >= 22))
+    if ONLY_DATE:
+        days = [d for d in days if d == ONLY_DATE]
+    sdir, cdir = os.path.join(ROOT, "data", "stocks"), os.path.join(ROOT, "data", "crypto")
+    need_s = [d for d in days if ONLY_DATE or not os.path.exists(os.path.join(sdir, d + ".csv"))]
+    need_c = [d for d in days if ONLY_DATE or not os.path.exists(os.path.join(cdir, d + ".csv"))]
+    print("trading days seen:", days[-10:], "| missing stocks:", need_s, "| missing crypto:", need_c)
+
+    if need_s:
+        per_day = {d: {} for d in need_s}
+        syms = universe()
+        print("stock universe:", len(syms))
+        missing = []
+        for s in syms:
+            data, src = (qqq, "yahoo") if s == "QQQ" else series(s)
+            if not data:
+                missing.append(s); continue
+            for d in need_s:
+                if d in data:
+                    per_day[d][s] = data[d] + (src,)
+        for d, rows in per_day.items():
+            if "QQQ" in rows:
+                write(os.path.join(sdir, d + ".csv"), rows)
+                print(f"{d}: stocks {len(rows)}")
+        if missing:
+            print("no data for:", " ".join(missing[:50]), "..." if len(missing) > 50 else "")
+
+    if need_c:
+        per_day = {d: {} for d in need_c}
+        for s in read_list("crypto_symbols.txt"):
+            data, src = series(s, crypto=True)
+            for d in need_c:
+                if d in data:
+                    per_day[d][s + "/USD"] = data[d] + (src,)
+        for d, rows in per_day.items():
+            if "BTC/USD" in rows:
+                write(os.path.join(cdir, d + ".csv"), rows)
+                print(f"{d}: crypto {len(rows)}")
+
+    os.makedirs(sdir, exist_ok=True)
+    files = sorted(f[:-4] for f in os.listdir(sdir) if f.endswith(".csv"))
     with open(os.path.join(ROOT, "data", "LATEST.txt"), "w") as f:
-        f.write((latest[-1] if latest else "none") + "\n")
+        f.write((files[-1] if files else "none") + "\n")
 
 
 if __name__ == "__main__":
