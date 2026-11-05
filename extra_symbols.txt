@@ -1,3 +1,0 @@
-# Stocks outside the S&P 500 / Nasdaq-100 that the tracker should cover. One ticker per line.
-# Add a ticker here BEFORE the tracker picks it; picks must appear in the latest data/stocks file.
-DUOL
