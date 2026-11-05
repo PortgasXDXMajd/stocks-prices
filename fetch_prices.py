@@ -3,7 +3,7 @@
 
 Primary source: yfinance (Yahoo Finance; handles Yahoo's cookie/crumb checks).
 Fallback for stocks/ETFs: Nasdaq.com's public historical-quote API.
-Universe: S&P 500 + Nasdaq-100 + extra_symbols.txt (stocks), crypto_symbols.txt (crypto).
+Universe: every US-listed stock/ETF (Nasdaq Trader symbol directory) and the top 250 coins (CoinGecko).
 
 Writes one CSV per US trading day (the dates QQQ traded):
   data/stocks/YYYY-MM-DD.csv
@@ -66,19 +66,45 @@ def seen_before():
     return out
 
 
+NASDAQ_LISTED = "https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt"
+OTHER_LISTED = "https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt"
+COINGECKO_TOP = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1"
+STABLE = {"USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "USDS", "PYUSD", "USD1", "BUSD", "USDD", "FRAX"}
+
+
 def universe():
+    """Every stock and ETF listed on Nasdaq, NYSE, NYSE American, NYSE Arca and Cboe,
+    plus anything seen in the last 45 days and extra_symbols.txt."""
     syms = set(ALWAYS) | set(read_list("extra_symbols.txt")) | seen_before()
-    txt = http(SP500_CSV)
+    for url, col in ((NASDAQ_LISTED, "Symbol"), (OTHER_LISTED, "ACT Symbol")):
+        txt = http(url)
+        if not txt:
+            print(f"warning: symbol list unavailable: {url}")
+            continue
+        for row in csv.DictReader(io.StringIO(txt), delimiter="|"):
+            sym = (row.get(col) or "").strip().upper()
+            if not sym or sym.startswith("FILE CREATION") or row.get("Test Issue") == "Y":
+                continue
+            if any(ch in sym for ch in "$^=") or len(sym) > 6:
+                continue  # preferreds, warrants and oddities
+            syms.add(sym)
+    return sorted(syms)
+
+
+def crypto_universe():
+    """Top 250 coins by market cap (CoinGecko, no key) + crypto_symbols.txt, minus stablecoins."""
+    syms = set(read_list("crypto_symbols.txt"))
+    txt = http(COINGECKO_TOP)
     if txt:
-        for row in csv.DictReader(io.StringIO(txt)):
-            if row.get("Symbol"):
-                syms.add(row["Symbol"].strip().upper())
-    html = http(NDX_WIKI, headers={"User-Agent": "morning-picks-prices/1.0 (github action)"})
-    if html:
-        m = re.search(r'id="constituents".*?</table>', html, re.S)
-        if m:
-            for t in re.findall(r"<tr>\s*<td>(?:<a[^>]*>)?([A-Z.]{1,6})(?:</a>)?\s*</td>", m.group(0)):
-                syms.add(t)
+        try:
+            for c in json.loads(txt):
+                sym = str(c.get("symbol", "")).upper()
+                if sym.isalnum() and sym not in STABLE:
+                    syms.add(sym)
+        except Exception as e:
+            print(f"warning: CoinGecko list unreadable: {e}")
+    else:
+        print("warning: CoinGecko list unavailable; using crypto_symbols.txt only")
     return sorted(syms)
 
 
@@ -96,6 +122,7 @@ def yf_batch(symbols, yahoo_names):
             print("yfinance could not be installed"); return {}
     out = {}
     names = [yahoo_names[s] for s in symbols]
+    back = {yahoo_names[s]: s for s in symbols}
     for i in range(0, len(names), 200):
         chunk = names[i:i + 200]
         try:
@@ -110,7 +137,7 @@ def yf_batch(symbols, yahoo_names):
                 sub = df[yn] if len(chunk) > 1 else df
             except KeyError:
                 continue
-            sym = next(s for s in symbols if yahoo_names[s] == yn)
+            sym = back[yn]
             rows = {}
             for idx, r in sub.iterrows():
                 vals = [r.get("Open"), r.get("High"), r.get("Low"), r.get("Close"), r.get("Volume")]
@@ -170,9 +197,10 @@ def main():
     print("stock universe:", len(stocks))
     data = {s: (d, "yahoo") for s, d in yf_batch(stocks, {s: s.replace(".", "-") for s in stocks}).items()}
     print("yfinance stocks:", len(data))
-    if "QQQ" not in data or len(data) < 0.8 * len(stocks):
-        print("yfinance incomplete; trying Nasdaq.com for the rest")
-        for s in stocks:
+    must = set(ALWAYS) | set(read_list("extra_symbols.txt"))
+    if any(m not in data for m in must):
+        print("yfinance missed key symbols; trying Nasdaq.com for them")
+        for s in sorted(must):
             if s not in data:
                 d = nasdaq(s)
                 if d:
@@ -196,7 +224,8 @@ def main():
         write(p, rows)
         print(f"{d}: stocks {len(rows)}")
 
-    cryptos = read_list("crypto_symbols.txt")
+    cryptos = crypto_universe()
+    print("crypto universe:", len(cryptos))
     cdata = yf_batch(cryptos, {c: c + "-USD" for c in cryptos})
     print("yfinance crypto:", len(cdata))
     for d in days:
