@@ -51,8 +51,23 @@ def read_list(name):
     return [l.strip().upper() for l in open(p) if l.strip() and not l.startswith("#")]
 
 
+def seen_before():
+    """Every stock that appeared in a file of the last 45 days stays in the universe,
+    so a pick can still be scored after it leaves the S&P 500 / Nasdaq-100."""
+    sdir = os.path.join(ROOT, "data", "stocks")
+    if not os.path.isdir(sdir):
+        return set()
+    cutoff = (dt.date.today() - dt.timedelta(days=45)).isoformat()
+    out = set()
+    for f in os.listdir(sdir):
+        if f.endswith(".csv") and f[:-4] >= cutoff:
+            with open(os.path.join(sdir, f)) as fh:
+                out |= {r["symbol"] for r in csv.DictReader(fh)}
+    return out
+
+
 def universe():
-    syms = set(ALWAYS) | set(read_list("extra_symbols.txt"))
+    syms = set(ALWAYS) | set(read_list("extra_symbols.txt")) | seen_before()
     txt = http(SP500_CSV)
     if txt:
         for row in csv.DictReader(io.StringIO(txt)):
