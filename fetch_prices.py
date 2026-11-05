@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Nightly price snapshot for the Morning Picks paper tracker. No API keys.
 
-Source: Yahoo Finance chart endpoint (public, no key); Stooq CSV as fallback.
+Primary source: yfinance (Yahoo Finance; handles Yahoo's cookie/crumb checks).
+Fallback for stocks/ETFs: Nasdaq.com's public historical-quote API.
 Universe: S&P 500 + Nasdaq-100 + extra_symbols.txt (stocks), crypto_symbols.txt (crypto).
 
 Writes one CSV per US trading day (the dates QQQ traded):
@@ -9,32 +10,37 @@ Writes one CSV per US trading day (the dates QQQ traded):
   data/crypto/YYYY-MM-DD.csv   (crypto daily bar of that UTC date, symbols as "SOL/USD")
 Columns: symbol,open,high,low,close,volume,bar_time_utc,feed
 
-Every run downloads the last month per symbol and writes any trading day that
-is missing on disk, so failed nights repair themselves. Stdlib only.
+Each run loads the last month and writes every trading day missing on disk.
 Optional env: ONLY_DATE=YYYY-MM-DD to rewrite one day.
 """
-import csv, datetime as dt, io, json, os, re, sys, time, urllib.request, urllib.error
+import csv, datetime as dt, io, json, math, os, re, sys, time, urllib.request, urllib.error
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 ONLY_DATE = os.environ.get("ONLY_DATE", "").strip()
-UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
-      "Accept": "*/*"}
+UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36",
+      "Accept": "application/json, text/plain, */*", "Accept-Language": "en-US,en;q=0.9"}
 SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv"
 NDX_WIKI = "https://en.wikipedia.org/wiki/Nasdaq-100"
 ALWAYS = ["QQQ", "SPY"]
+ETFS = {"QQQ", "SPY"}
 
 
-def http(url, tries=4, pause=2.0):
+def http(url, headers=None, tries=3):
+    last = None
     for i in range(tries):
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=30) as r:
+            req = urllib.request.Request(url, headers=headers or UA)
+            with urllib.request.urlopen(req, timeout=30) as r:
                 return r.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as e:
+            last = f"HTTP {e.code}"
             if e.code in (429, 500, 502, 503, 504):
-                time.sleep(pause * (i + 1) * 2); continue
-            return None
-        except Exception:
-            time.sleep(pause * (i + 1))
+                time.sleep(4 * (i + 1)); continue
+            break
+        except Exception as e:
+            last = type(e).__name__
+            time.sleep(3 * (i + 1))
+    print(f"  fetch failed ({last}): {url[:100]}")
     return None
 
 
@@ -52,65 +58,85 @@ def universe():
         for row in csv.DictReader(io.StringIO(txt)):
             if row.get("Symbol"):
                 syms.add(row["Symbol"].strip().upper())
-    else:
-        print("warning: S&P 500 list unavailable")
-    html = http(NDX_WIKI)
+    html = http(NDX_WIKI, headers={"User-Agent": "morning-picks-prices/1.0 (github action)"})
     if html:
         m = re.search(r'id="constituents".*?</table>', html, re.S)
         if m:
             for t in re.findall(r"<tr>\s*<td>(?:<a[^>]*>)?([A-Z.]{1,6})(?:</a>)?\s*</td>", m.group(0)):
                 syms.add(t)
-    else:
-        print("warning: Nasdaq-100 list unavailable")
     return sorted(syms)
 
 
-def yahoo(symbol):
-    """Daily bars for the last month: {date: (o,h,l,c,v,ts_iso)}"""
-    ysym = symbol.replace(".", "-")
-    for host in ("query1", "query2"):
-        txt = http(f"https://{host}.finance.yahoo.com/v8/finance/chart/{ysym}?range=1mo&interval=1d&includePrePost=false")
-        if not txt:
-            continue
+# ---------- yfinance (batch) ----------
+def yf_batch(symbols, yahoo_names):
+    """Returns {symbol: {date: (o,h,l,c,v,iso)}} for the last month."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        import subprocess
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "yfinance>=0.2.54"], check=False)
         try:
-            res = json.loads(txt)["chart"]["result"][0]
-            ts = res["timestamp"]
-            q = res["indicators"]["quote"][0]
-            off = res["meta"].get("gmtoffset", 0)
-        except Exception:
-            continue
-        out = {}
-        for i, t in enumerate(ts):
-            o, h, l, c, v = (q[k][i] for k in ("open", "high", "low", "close", "volume"))
-            if None in (o, h, l, c):
-                continue
-            day = dt.datetime.fromtimestamp(t + off, dt.timezone.utc).date().isoformat()
-            iso = dt.datetime.fromtimestamp(t, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            out[day] = (round(o, 6), round(h, 6), round(l, 6), round(c, 6), v or 0, iso)
-        if out:
-            return out, "yahoo"
-    return {}, None
-
-
-def stooq(symbol, suffix):
-    txt = http(f"https://stooq.com/q/d/l/?s={symbol.lower()}{suffix}&i=d")
+            import yfinance as yf
+        except ImportError:
+            print("yfinance could not be installed"); return {}
     out = {}
-    if txt and txt.startswith("Date"):
-        for row in list(csv.DictReader(io.StringIO(txt)))[-30:]:
+    names = [yahoo_names[s] for s in symbols]
+    for i in range(0, len(names), 200):
+        chunk = names[i:i + 200]
+        try:
+            df = yf.download(chunk, period="1mo", interval="1d", group_by="ticker",
+                             auto_adjust=False, actions=False, threads=True, progress=False)
+        except Exception as e:
+            print(f"  yfinance batch error: {e}"); continue
+        if df is None or df.empty:
+            print("  yfinance returned nothing for a batch"); continue
+        for yn in chunk:
             try:
-                out[row["Date"]] = (float(row["Open"]), float(row["High"]), float(row["Low"]),
-                                    float(row["Close"]), int(float(row.get("Volume") or 0)), row["Date"] + "T00:00:00Z")
-            except Exception:
-                pass
-    return (out, "stooq") if out else ({}, None)
+                sub = df[yn] if len(chunk) > 1 else df
+            except KeyError:
+                continue
+            sym = next(s for s in symbols if yahoo_names[s] == yn)
+            rows = {}
+            for idx, r in sub.iterrows():
+                vals = [r.get("Open"), r.get("High"), r.get("Low"), r.get("Close"), r.get("Volume")]
+                if any(v is None or (isinstance(v, float) and math.isnan(v)) for v in vals[:4]):
+                    continue
+                day = idx.date().isoformat()
+                v = 0 if vals[4] is None or (isinstance(vals[4], float) and math.isnan(vals[4])) else int(vals[4])
+                rows[day] = (round(float(vals[0]), 6), round(float(vals[1]), 6), round(float(vals[2]), 6),
+                             round(float(vals[3]), 6), v, day + "T00:00:00Z")
+            if rows:
+                out[sym] = rows
+        time.sleep(2)
+    return out
 
 
-def series(symbol, crypto=False):
-    data, src = yahoo(symbol + "-USD" if crypto else symbol)
-    if not data:
-        data, src = stooq(symbol, ".v" if crypto else ".us")
-    time.sleep(0.25)
-    return data, src
+# ---------- Nasdaq.com fallback (stocks/ETFs) ----------
+def nasdaq(symbol):
+    today = dt.date.today()
+    start = (today - dt.timedelta(days=35)).isoformat()
+    cls = "etf" if symbol in ETFS else "stocks"
+    url = (f"https://api.nasdaq.com/api/quote/{symbol.replace('.', '%5E')}/historical?assetclass={cls}"
+           f"&fromdate={start}&todate={today.isoformat()}&limit=60")
+    txt = http(url, headers={**UA, "Origin": "https://www.nasdaq.com", "Referer": "https://www.nasdaq.com/"})
+    if not txt:
+        return {}
+    try:
+        rows = json.loads(txt)["data"]["tradesTable"]["rows"]
+    except Exception:
+        return {}
+    num = lambda s: float(str(s).replace("$", "").replace(",", "").strip())
+    out = {}
+    for r in rows:
+        try:
+            m, d, y = r["date"].split("/")
+            day = f"{y}-{m}-{d}"
+            out[day] = (num(r["open"]), num(r["high"]), num(r["low"]), num(r["close"]),
+                        int(num(r.get("volume") or 0)), day + "T00:00:00Z")
+        except Exception:
+            pass
+    time.sleep(0.4)
+    return out
 
 
 def write(path, rows):
@@ -125,50 +151,47 @@ def write(path, rows):
 
 
 def main():
-    qqq, _ = series("QQQ")
-    if not qqq:
-        sys.exit("QQQ history unavailable from every source; try again later")
+    stocks = universe()
+    print("stock universe:", len(stocks))
+    data = {s: (d, "yahoo") for s, d in yf_batch(stocks, {s: s.replace(".", "-") for s in stocks}).items()}
+    print("yfinance stocks:", len(data))
+    if "QQQ" not in data or len(data) < 0.8 * len(stocks):
+        print("yfinance incomplete; trying Nasdaq.com for the rest")
+        for s in stocks:
+            if s not in data:
+                d = nasdaq(s)
+                if d:
+                    data[s] = (d, "nasdaq")
+        print("after Nasdaq fallback:", len(data))
+    if "QQQ" not in data:
+        sys.exit("QQQ history unavailable from yfinance and Nasdaq.com; see fetch errors above")
+
     now = dt.datetime.now(dt.timezone.utc)
     today = now.date().isoformat()
-    # only completed sessions: today's bar counts only after 22:00 UTC
-    days = sorted(d for d in qqq if d < today or (d == today and now.hour >= 22))
+    days = sorted(d for d in data["QQQ"][0] if d < today or (d == today and now.hour >= 22))
     if ONLY_DATE:
         days = [d for d in days if d == ONLY_DATE]
     sdir, cdir = os.path.join(ROOT, "data", "stocks"), os.path.join(ROOT, "data", "crypto")
-    need_s = [d for d in days if ONLY_DATE or not os.path.exists(os.path.join(sdir, d + ".csv"))]
-    need_c = [d for d in days if ONLY_DATE or not os.path.exists(os.path.join(cdir, d + ".csv"))]
-    print("trading days seen:", days[-10:], "| missing stocks:", need_s, "| missing crypto:", need_c)
 
-    if need_s:
-        per_day = {d: {} for d in need_s}
-        syms = universe()
-        print("stock universe:", len(syms))
-        missing = []
-        for s in syms:
-            data, src = (qqq, "yahoo") if s == "QQQ" else series(s)
-            if not data:
-                missing.append(s); continue
-            for d in need_s:
-                if d in data:
-                    per_day[d][s] = data[d] + (src,)
-        for d, rows in per_day.items():
-            if "QQQ" in rows:
-                write(os.path.join(sdir, d + ".csv"), rows)
-                print(f"{d}: stocks {len(rows)}")
-        if missing:
-            print("no data for:", " ".join(missing[:50]), "..." if len(missing) > 50 else "")
+    for d in days:
+        p = os.path.join(sdir, d + ".csv")
+        if os.path.exists(p) and not ONLY_DATE:
+            continue
+        rows = {s: series[d] + (src,) for s, (series, src) in data.items() if d in series}
+        write(p, rows)
+        print(f"{d}: stocks {len(rows)}")
 
-    if need_c:
-        per_day = {d: {} for d in need_c}
-        for s in read_list("crypto_symbols.txt"):
-            data, src = series(s, crypto=True)
-            for d in need_c:
-                if d in data:
-                    per_day[d][s + "/USD"] = data[d] + (src,)
-        for d, rows in per_day.items():
-            if "BTC/USD" in rows:
-                write(os.path.join(cdir, d + ".csv"), rows)
-                print(f"{d}: crypto {len(rows)}")
+    cryptos = read_list("crypto_symbols.txt")
+    cdata = yf_batch(cryptos, {c: c + "-USD" for c in cryptos})
+    print("yfinance crypto:", len(cdata))
+    for d in days:
+        p = os.path.join(cdir, d + ".csv")
+        if os.path.exists(p) and not ONLY_DATE:
+            continue
+        rows = {c + "/USD": series[d] + ("yahoo",) for c, series in cdata.items() if d in series}
+        if "BTC/USD" in rows:
+            write(p, rows)
+            print(f"{d}: crypto {len(rows)}")
 
     os.makedirs(sdir, exist_ok=True)
     files = sorted(f[:-4] for f in os.listdir(sdir) if f.endswith(".csv"))
