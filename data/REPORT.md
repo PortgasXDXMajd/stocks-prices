@@ -1,6 +1,6 @@
 # Morning Picks: paper-trading scorecard
 
-_Generated 2026-11-05T23:15:22Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-05T23:16:04Z. Paper experiment only: nothing is ever traded._
 
 ## Rules, in short
 
@@ -41,5 +41,5 @@ Returns are percent changes from the entry price to the close on the 1st/5th/20t
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 2026-11-05-prices | prices | 2026-11-05T23:15:21Z | — | 3 | — | — | 5/5 symbols, 27 bars; 3 pick(s) updated; scored_1 3 | — |
+| 2026-11-05-prices | prices | 2026-11-05T23:16:02Z | — | 0 | — | — | 5/5 symbols, 27 bars; 0 pick(s) updated; scored_1 3 | — |
 | 2026-11-04-picks | picks | 2026-11-05T23:15:21Z | 3 | 0 | — | — | Imported from the old system (scheduled task); 3 picks: AMD, ANET, DUOL. | — |
