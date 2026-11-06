@@ -41,8 +41,8 @@ data/
   morning-picks.yml, evening-prices.yml   GitHub Actions workflows
 ```
 
-- **Morning** (`morning-picks`, Mon-Fri 06:30 UTC = 07:30 Berlin in winter, 08:30 in summer): `python -m app.picker`. It exits quietly on weekends, after the last pick date, if today already has a picks run, or at/after 15:00 Berlin. Otherwise it asks Claude for picks, checks each one (allowed type, not excluded, Yahoo has history, stock last close >= $1), stores the valid ones (at most 3, in the order given) as `pending_entry`, writes a `runs` row and refreshes `data/REPORT.md`.
-- **Evening** (`evening-prices`, Mon-Fri 22:20 UTC, after the US close): `python -m app.prices`. Downloads raw (unadjusted) daily bars, fills entry prices and +1/+5/+20 day closes, computes returns, updates `data/REPORT.md`. It fails (non-zero exit) only if QQQ could not be downloaded, so a broken data source shows up as a red run in the Actions tab.
+- **Morning** (`morning-picks`, Mon-Fri 06:30 UTC = 07:30 Berlin in winter, 08:30 in summer; backup triggers at 07:47, 09:11 and 10:23 UTC because GitHub cron is best effort and can drop runs): `python -m app.picker`. It exits quietly on weekends, after the last pick date, if today already has a picks run, or at/after 15:00 Berlin. Otherwise it asks Claude for picks, checks each one (allowed type, not excluded, Yahoo has history, stock last close >= $1), stores the valid ones (at most 3, in the order given) as `pending_entry`, writes a `runs` row and refreshes `data/REPORT.md`.
+- **Evening** (`evening-prices`, Mon-Fri 22:20 UTC, after the US close; backup at 23:47 UTC): `python -m app.prices`. Downloads raw (unadjusted) daily bars, fills entry prices and +1/+5/+20 day closes, computes returns, updates `data/REPORT.md`. It fails (non-zero exit) only if QQQ could not be downloaded, so a broken data source shows up as a red run in the Actions tab.
 - Both workflows share the concurrency group `picks-db`, so they never write the database at the same time. Each commits `data/` as `morning-picks-bot` only if the script succeeded and something changed.
 
 ## Setup (once)

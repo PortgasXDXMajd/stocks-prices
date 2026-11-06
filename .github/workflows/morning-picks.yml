@@ -2,8 +2,14 @@ name: morning-picks
 
 on:
   schedule:
-    # Mon-Fri 06:30 UTC = 07:30 Berlin in winter, 08:30 in summer; always before the 15:30 Berlin US open
+    # Mon-Fri 06:30 UTC = 07:30 Berlin in winter, 08:30 in summer; always before the 15:30 Berlin US open.
+    # GitHub cron is best effort (runs can be late or dropped), so backups follow at off-peak
+    # minutes. The picker allows one picking pass per day, so backups exit once a day has picks,
+    # and all of them are before the 15:00 Berlin cutoff (latest: 10:23 UTC = 12:23 Berlin in summer).
     - cron: "30 6 * * 1-5"
+    - cron: "47 7 * * 1-5"
+    - cron: "11 9 * * 1-5"
+    - cron: "23 10 * * 1-5"
   workflow_dispatch:
     inputs:
       force:

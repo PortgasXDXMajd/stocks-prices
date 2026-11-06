@@ -2,8 +2,10 @@ name: evening-prices
 
 on:
   schedule:
-    # Mon-Fri 22:20 UTC = 23:20 Berlin in winter, 00:20 in summer; always after the US close
+    # Mon-Fri 22:20 UTC = 23:20 Berlin in winter, 00:20 in summer; always after the US close.
+    # Backup at 23:47 UTC in case GitHub drops the first (cron is best effort); re-runs are harmless.
     - cron: "20 22 * * 1-5"
+    - cron: "47 23 * * 1-5"
   workflow_dispatch:
 
 permissions:
