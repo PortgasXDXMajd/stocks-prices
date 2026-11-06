@@ -1,6 +1,6 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-06T19:44:16Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-06T19:45:49Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
@@ -39,7 +39,7 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 2026-11-06-prices | prices | 2026-11-06T19:23:59Z | — | 2 | — | — | 7/7 symbols, 44 bars; 2 pick(s) updated; open 2, scored_1 3 | — |
+| 2026-11-06-prices | prices | 2026-11-06T19:45:47Z | — | 0 | — | — | 7/7 symbols, 44 bars; 0 pick(s) updated; open 2, scored_1 3 | — |
 | 2026-11-06-picks | picks | 2026-11-06T08:27:38Z | 2 | 2 | 130,882 / 4,214 | 9 | Nasdaq fell 5.5% Thursday on post-midterm AI/data-center fears, with chips down 12%. I picked two clean beat-and-raise reports from after Thursday's close: ABNB, a buyback-backed consumer name outside the AI selloff, and NET, whose growth is accelerating, betting on post-earnings drift beating QQQ. | — |
 | 2026-11-05-prices | prices | 2026-11-05T23:16:02Z | — | 0 | — | — | 5/5 symbols, 27 bars; 0 pick(s) updated; scored_1 3 | — |
 | 2026-11-04-picks | picks | 2026-11-05T23:15:21Z | 3 | 0 | — | — | Imported from the old system (scheduled task); 3 picks: AMD, ANET, DUOL. | — |
