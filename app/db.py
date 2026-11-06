@@ -19,10 +19,13 @@ CRYPTO_BENCH = "BTC-USD"
 CALENDAR_SYMBOL = "QQQ"  # US trading days = dates on which QQQ has a daily bar
 HORIZONS = (1, 5, 20)
 
-# The experiment rules, fixed in advance. Seeded into the config table as text.
+# The experiment rules. Seeded into the config table as text.
+# Changed 2026-11-06 (user decision): one daily run right after the US open; a pick's
+# entry is the live price in the minute it is made; the report shows how much each pick
+# moved after 1/5/20 trading days. The PASS/FAIL verdict was dropped.
 CONFIG = {
-    "hypothesis": "Reading the morning news lets Claude pick names that beat their "
-    "benchmark over the next 5 US trading days, after costs.",
+    "hypothesis": "Do the names Claude picks from the news right after the US open go up "
+    "over the next 1, 5 and 20 US trading days, and by how much (also vs QQQ / BTC-USD)?",
     "first_pick_date": "2026-11-04",
     "last_pick_date": "2027-02-06",
     "finish_date": "2027-03-10",
@@ -32,23 +35,30 @@ CONFIG = {
     "not_allowed": "OTC/pink sheets, foreign-only listings, coins outside the top 250, "
     "stablecoins, any symbol picked in the last 20 US trading days.",
     "exclusion_window_calendar_days": "28",
-    "pick_cutoff_berlin": "15:00",
-    "entry_rule_stock": "Official open on the first US trading day on or after pick_date.",
-    "entry_rule_crypto": "Close of the pick_date daily bar (UTC), filled only once that day is over.",
-    "scoring_rule": "Close on the 1st, 5th and 20th US trading day after the entry date "
-    "(crypto: after pick_date). US trading days = dates on which QQQ has a daily bar.",
+    "pick_window_new_york": "09:30-16:00",
+    "entry_rule": "Price at pick time: close of the last 1-minute Yahoo bar that starts at or "
+    "before the moment the pick is made (at most 10 minutes earlier), for the pick and its "
+    "benchmark. Picks from 2026-11-04 and 2026-11-06, made before the open under the old "
+    "rule, entered at the official open of their pick day.",
+    "scoring_rule": "Official close on the 1st, 5th and 20th US trading day after the pick "
+    "day (crypto: UTC daily close on those dates). US trading days = dates on which QQQ has "
+    "a daily bar.",
     "bench_stock": STOCK_BENCH,
     "bench_crypto": CRYPTO_BENCH,
     "cost_pct_stock": "0.5",
     "cost_pct_crypto": "1.0",
     "returns": "retN = (pN/entry - 1)*100, bretN = (bN/bench_entry - 1)*100, "
     "exN = retN - bretN - cost_pct; percent, 2 decimals.",
-    "verdict_min_n": "60",
-    "verdict_min_t": "2",
-    "verdict_rule": "PASS only if at least 60 picks have ex5, mean ex5 > 0 and "
-    "t = mean/(sd/sqrt(n)) >= 2 (sample sd). Anything else is FAIL.",
     "missing_price_rule": "Never invent a price. Missing stays NULL with a note and is retried.",
     "max_missing_runs": "3",
+}
+
+ENTRY_OPEN = "open"            # old rule: official open of the first trading day >= pick_date
+ENTRY_PICK_TIME = "pick_time"  # current rule: live price in the minute of the pick
+# Columns added after the first schema; connect() adds them to older databases.
+MIGRATIONS = {
+    "entry_utc": "ALTER TABLE picks ADD COLUMN entry_utc TEXT",
+    "entry_rule": f"ALTER TABLE picks ADD COLUMN entry_rule TEXT NOT NULL DEFAULT '{ENTRY_OPEN}'",
 }
 
 SCHEMA = """
@@ -71,7 +81,9 @@ CREATE TABLE IF NOT EXISTS picks (
   ex1 REAL, ex5 REAL, ex20 REAL,
   status TEXT NOT NULL DEFAULT 'pending_entry',
   notes TEXT DEFAULT '',
-  model TEXT
+  model TEXT,
+  entry_utc TEXT,                  -- when the entry price was taken (pick_time rule)
+  entry_rule TEXT NOT NULL DEFAULT 'open'  -- 'open' | 'pick_time'
 );
 CREATE TABLE IF NOT EXISTS prices (
   symbol TEXT NOT NULL, date TEXT NOT NULL,
@@ -113,6 +125,14 @@ def connect(path: str | os.PathLike | None = None) -> sqlite3.Connection:
     # bump), so a run that writes nothing (e.g. a guard-stopped picker) leaves
     # data/picks.db unmodified and the workflow commits nothing.
     before = conn.total_changes
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(picks)")}
+    for col, sql in MIGRATIONS.items():
+        if col not in cols:
+            conn.execute(sql)
+    conn.execute(
+        f"DELETE FROM config WHERE key NOT IN ({','.join('?' * len(CONFIG))})",
+        list(CONFIG),
+    )
     conn.executemany(
         "INSERT INTO config (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value "

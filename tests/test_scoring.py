@@ -629,14 +629,16 @@ class PricesMainTests(TempDBTest):
 
 
 class PickerGuardTests(TempDBTest):
-    def test_cutoff_1500_berlin(self):
+    def test_only_during_us_session(self):
         from app import picker
 
-        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 5, 14, 59), False))
-        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 15, 0), False))
-        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 15, 30), False))
-        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 5, 15, 0), True))
-        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 5, 7, 30), False))
+        # 2026-11-05 is in EST: 09:30-16:00 New York = 15:30-22:00 Berlin.
+        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 8, 0), False))
+        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 15, 29), False))
+        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 5, 15, 30), False))
+        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 5, 21, 59), False))
+        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 22, 0), False))
+        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 5, 8, 0), True))
 
     def test_weekend_refused_even_with_force(self):
         from app import picker
@@ -647,7 +649,7 @@ class PickerGuardTests(TempDBTest):
     def test_after_last_pick_date_refused(self):
         from app import picker
 
-        self.assertIsNone(picker.guard(self.conn, berlin(2027, 2, 5, 8, 0), False))
+        self.assertIsNone(picker.guard(self.conn, berlin(2027, 2, 5, 16, 0), False))
         self.assertIsNotNone(picker.guard(self.conn, berlin(2027, 2, 8, 8, 0), False))
         self.assertIsNotNone(picker.guard(self.conn, berlin(2027, 2, 8, 8, 0), True))
 
@@ -659,9 +661,9 @@ class PickerGuardTests(TempDBTest):
             "'2026-11-05', 'picks', 0)"
         )
         self.conn.commit()
-        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 8, 0), False))
-        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 8, 0), True))
-        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 6, 8, 0), False))
+        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 16, 0), False))
+        self.assertIsNotNone(picker.guard(self.conn, berlin(2026, 11, 5, 16, 0), True))
+        self.assertIsNone(picker.guard(self.conn, berlin(2026, 11, 6, 16, 0), False))
 
     def test_excluded_symbols_last_28_days(self):
         from app import picker
@@ -771,7 +773,7 @@ class ValidatePickTests(unittest.TestCase):
 
 
 class PickerMainTests(TempDBTest):
-    def run_main(self, claude, now=None, env=None):
+    def run_main(self, claude, now=None, env=None, market_open=True):
         import app.picker as picker
 
         env = {"ANTHROPIC_API_KEY": "test-key-not-real"} if env is None else env
@@ -785,11 +787,14 @@ class PickerMainTests(TempDBTest):
             st.enter_context(
                 mock.patch.object(picker, "yahoo_exchange", side_effect=fake_exchange)
             )
+            self.market = st.enter_context(
+                mock.patch.object(picker, "market_open_now", return_value=market_open)
+            )
             if hasattr(picker, "urlopen"):
                 st.enter_context(
                     mock.patch.object(picker, "urlopen", side_effect=OSError("no network"))
                 )
-            rc = picker.main(now or berlin(2026, 11, 5, 8, 0))
+            rc = picker.main(now or berlin(2026, 11, 5, 15, 40))  # 09:40 New York
         self.reopen()
         return rc, cc
 
@@ -840,7 +845,7 @@ class PickerMainTests(TempDBTest):
 
     def test_guard_stops_without_calling_claude(self):
         rc, cc = self.run_main(
-            {"return_value": self.response(GOOD_TEXT)}, now=berlin(2026, 11, 5, 15, 0)
+            {"return_value": self.response(GOOD_TEXT)}, now=berlin(2026, 11, 5, 8, 0)
         )
         self.assertEqual(rc, 0)
         cc.assert_not_called()
@@ -856,7 +861,7 @@ class PickerMainTests(TempDBTest):
         before = hashlib.md5(self.db_path.read_bytes()).hexdigest()
         for now in (berlin(2026, 11, 7, 8, 0),    # weekend
                     berlin(2027, 2, 8, 8, 0),     # after last_pick_date
-                    berlin(2026, 11, 5, 15, 0)):  # cutoff
+                    berlin(2026, 11, 5, 8, 0)):   # before the US open
             rc, cc = self.run_main({"return_value": self.response(GOOD_TEXT)}, now=now)
             self.assertEqual(rc, 0)
             cc.assert_not_called()
@@ -864,17 +869,38 @@ class PickerMainTests(TempDBTest):
             self.assertEqual(hashlib.md5(self.db_path.read_bytes()).hexdigest(), before)
         self.conn = db.connect(self.db_path)
 
-    def test_force_env_allows_after_cutoff(self):
+    def test_force_env_allows_outside_session(self):
         rc, cc = self.run_main(
             {"return_value": self.response(GOOD_TEXT)},
-            now=berlin(2026, 11, 5, 15, 30),
+            now=berlin(2026, 11, 5, 8, 0),
             env={"ANTHROPIC_API_KEY": "test-key-not-real", "FORCE": "1"},
+            market_open=False,
         )
         self.assertEqual(rc, 0)
         cc.assert_called_once()
+        self.market.assert_not_called()
         self.assertIsNotNone(
             self.conn.execute("SELECT * FROM runs WHERE id='2026-11-05-picks'").fetchone()
         )
+
+    def test_market_closed_holiday_no_picks_no_run_row(self):
+        rc, cc = self.run_main({"return_value": self.response(GOOD_TEXT)}, market_open=False)
+        self.assertEqual(rc, 0)
+        cc.assert_not_called()
+        self.assertIsNone(
+            self.conn.execute("SELECT * FROM runs WHERE id='2026-11-05-picks'").fetchone()
+        )
+
+    def test_new_picks_use_pick_time_rule(self):
+        rc, _ = self.run_main({"return_value": self.response(GOOD_TEXT)})
+        self.assertEqual(rc, 0)
+        rows = self.conn.execute("SELECT * FROM picks").fetchall()
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertEqual(r["entry_rule"], db.ENTRY_PICK_TIME)
+            self.assertEqual(r["run_utc"], "2026-11-05T14:40:00Z")
+            self.assertEqual(r["entry_date"], "2026-11-05")
+            self.assertIsNone(r["entry_price"])
 
     def test_missing_key_returns_1_without_run_row(self):
         rc, cc = self.run_main({"return_value": self.response(GOOD_TEXT)}, env={})
@@ -915,3 +941,180 @@ class SeedTests(TempDBTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- pick-time entry
+
+
+def add_pick_time_pick(conn, run_utc, symbol, type_="stock"):
+    """A pick under the current rule: entry = price at pick time (run_utc)."""
+    t = datetime.fromisoformat(run_utc.replace("Z", "+00:00"))
+    pick_date = t.astimezone(db.BERLIN).date().isoformat()
+    pid = add_pick(conn, pick_date, symbol, type_)
+    conn.execute(
+        "UPDATE picks SET run_utc = ?, entry_rule = ?, entry_date = ? WHERE id = ?",
+        (run_utc, db.ENTRY_PICK_TIME, t.astimezone(db.NEW_YORK).date().isoformat(), pid),
+    )
+    conn.commit()
+    return pid
+
+
+class PickTimeEntryTests(TempDBTest):
+    def test_entry_from_minute_prices_and_closes_after_pick_day(self):
+        from app import prices
+
+        pid = add_pick_time_pick(self.conn, "2026-11-09T14:40:00Z", "ABNB")  # Mon 09:40 NY
+        quotes = {"ABNB": (190.0, "2026-11-09T14:39:00Z"), "QQQ": (650.0, "2026-11-09T14:39:00Z")}
+        with mock.patch.object(prices, "fetch_minute_prices", return_value=quotes) as fm:
+            self.assertEqual(prices.fill_pick_time_entries(self.conn), 1)
+        at = fm.call_args[0][1]
+        self.assertEqual(at, utc(2026, 11, 9, 14, 40))
+        put_qqq(self.conn, "2026-11-10")
+        put_bar(self.conn, "ABNB", "2026-11-09", 185.0, 188.0)  # pick-day close: not +1 day
+        put_bar(self.conn, "ABNB", "2026-11-10", 189.0, 199.5)
+        prices.score_all(self.conn, utc(2026, 11, 10, 23, 0))
+        p = get_pick(self.conn, pid)
+        self.assertEqual((p["entry_price"], p["bench_entry"]), (190.0, 650.0))
+        self.assertEqual(p["entry_utc"], "2026-11-09T14:39:00Z")
+        self.assertEqual(p["entry_date"], "2026-11-09")
+        self.assertEqual(p["d1"], "2026-11-10")  # 1st trading day AFTER the pick day
+        self.assertEqual(p["p1"], 199.5)
+        self.assertEqual(p["ret1"], 5.0)
+        qqq_close = self.conn.execute(
+            "SELECT close FROM prices WHERE symbol='QQQ' AND date='2026-11-10'").fetchone()[0]
+        self.assertEqual(p["bret1"], round((qqq_close / 650.0 - 1) * 100, 2))
+        self.assertEqual(p["status"], "scored_1")
+
+    def test_missing_entry_noted_retried_and_never_overwritten(self):
+        from app import prices
+
+        pid = add_pick_time_pick(self.conn, "2026-11-09T14:40:00Z", "ABNB")
+        put_qqq(self.conn, "2026-11-09")
+        with mock.patch.object(prices, "fetch_minute_prices", return_value={}):
+            prices.fill_pick_time_entries(self.conn)
+        prices.score_all(self.conn, utc(2026, 11, 9, 23, 0))
+        p = get_pick(self.conn, pid)
+        self.assertIsNone(p["entry_price"])
+        self.assertIn("no ABNB price at pick time 2026-11-09T14:40:00Z", p["notes"])
+        self.assertEqual(p["status"], "pending_entry")
+        # Next run: Yahoo has the minute now (pick only, benchmark still missing).
+        with mock.patch.object(prices, "fetch_minute_prices",
+                               return_value={"ABNB": (190.0, "2026-11-09T14:39:00Z")}):
+            prices.fill_pick_time_entries(self.conn)
+        # A later different quote must not overwrite the stored entry.
+        with mock.patch.object(prices, "fetch_minute_prices",
+                               return_value={"ABNB": (999.0, "x"), "QQQ": (650.0, "x")}):
+            prices.fill_pick_time_entries(self.conn)
+        prices.score_all(self.conn, utc(2026, 11, 10, 23, 0))
+        p = get_pick(self.conn, pid)
+        self.assertEqual((p["entry_price"], p["bench_entry"]), (190.0, 650.0))
+        self.assertEqual(p["status"], "open")
+        self.assertNotIn("pick time", p["notes"] or "")
+
+    def test_entry_gives_up_after_three_runs(self):
+        from app import prices
+
+        pid = add_pick_time_pick(self.conn, "2026-11-09T14:40:00Z", "ABNB")
+        put_qqq(self.conn, "2026-11-09")
+        with mock.patch.object(prices, "fetch_minute_prices", return_value={}) as fm:
+            for i in range(4):
+                prices.fill_pick_time_entries(self.conn)
+                prices.score_all(self.conn, utc(2026, 11, 9 + i, 23, 0))
+        self.assertIn("not covered by price feed", get_pick(self.conn, pid)["notes"])
+        self.assertEqual(fm.call_count, 3)  # given up: not fetched on the 4th run
+
+
+class MinutePriceTests(unittest.TestCase):
+    def frame(self, symbols, start_utc, closes):
+        import pandas as pd
+
+        idx = pd.date_range(start_utc, periods=len(closes), freq="1min", tz="UTC")
+        cols = pd.MultiIndex.from_product([symbols, ["Open", "High", "Low", "Close", "Volume"]])
+        data = [[c, c, c, c, 1.0] * len(symbols) for c in closes]
+        return pd.DataFrame(data, index=idx, columns=cols)
+
+    def test_last_complete_bar_before_pick(self):
+        from app import prices
+
+        # Bars start 14:30..14:44; pick at 14:40:30 -> last complete bar is 14:39 (ends 14:40).
+        df = self.frame(["ABNB", "QQQ"], "2026-11-09 14:30", [100 + i for i in range(15)])
+        with mock.patch.object(prices, "_minute_download", return_value=df):
+            got = prices.fetch_minute_prices(["ABNB", "QQQ"], datetime(
+                2026, 11, 9, 14, 40, 30, tzinfo=timezone.utc))
+        self.assertEqual(got["ABNB"], (109.0, "2026-11-09T14:39:00Z"))
+        self.assertEqual(got["QQQ"][0], 109.0)
+
+    def test_no_stale_price_outside_session(self):
+        from app import prices
+
+        # Last bar 15:59 NY = 20:59 UTC; asking at 23:00 UTC is > 10 minutes later.
+        df = self.frame(["ABNB"], "2026-11-09 20:50", [100.0] * 10)
+        with mock.patch.object(prices, "_minute_download", return_value=df):
+            self.assertEqual(prices.fetch_minute_prices(["ABNB"], utc(2026, 11, 9, 23, 0)), {})
+
+
+class DailyTests(TempDBTest):
+    def test_price_step_runs_even_if_picker_fails(self):
+        from app import daily
+
+        with mock.patch.object(daily.picker, "main", side_effect=RuntimeError("boom")), \
+                mock.patch.object(daily.prices, "main", return_value=0) as pm:
+            self.assertEqual(daily.main(), 1)
+        pm.assert_called_once()
+
+    def test_ok_when_both_ok(self):
+        from app import daily
+
+        with mock.patch.object(daily.picker, "main", return_value=0), \
+                mock.patch.object(daily.prices, "main", return_value=0):
+            self.assertEqual(daily.main(), 0)
+
+    def test_backup_run_skips_prices_when_done_today_and_no_new_picks(self):
+        from app import daily
+
+        today = db.utc_now().date().isoformat()
+        self.conn.execute("INSERT INTO runs (id, date, kind) VALUES (?, ?, 'prices')",
+                          (f"{today}-prices", today))
+        self.conn.commit()
+        with mock.patch.object(daily.picker, "main", return_value=0), \
+                mock.patch.object(daily.prices, "main", return_value=0) as pm:
+            self.assertEqual(daily.main(), 0)
+        pm.assert_not_called()
+
+        def picks_one():
+            add_pick(db.connect(self.db_path), today, "NEW")
+            return 0
+
+        with mock.patch.object(daily.picker, "main", side_effect=picks_one), \
+                mock.patch.object(daily.prices, "main", return_value=0) as pm:
+            self.assertEqual(daily.main(), 0)
+        pm.assert_called_once()  # new picks need their entry price right away
+
+
+class MigrationTests(unittest.TestCase):
+    def test_old_database_gets_new_columns_and_keeps_open_rule(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "old.db"
+            old = sqlite3.connect(path)
+            old.execute("CREATE TABLE picks (id TEXT PRIMARY KEY, pick_date TEXT NOT NULL, "
+                        "run_utc TEXT, symbol TEXT NOT NULL, yahoo_symbol TEXT NOT NULL, name TEXT, "
+                        "type TEXT NOT NULL, reason TEXT, news_url TEXT, bench TEXT NOT NULL, "
+                        "cost_pct REAL NOT NULL, entry_date TEXT, entry_price REAL, bench_entry REAL, "
+                        "d1 TEXT, d5 TEXT, d20 TEXT, p1 REAL, p5 REAL, p20 REAL, b1 REAL, b5 REAL, "
+                        "b20 REAL, ret1 REAL, ret5 REAL, ret20 REAL, bret1 REAL, bret5 REAL, "
+                        "bret20 REAL, ex1 REAL, ex5 REAL, ex20 REAL, status TEXT NOT NULL DEFAULT "
+                        "'pending_entry', notes TEXT DEFAULT '', model TEXT)")
+            old.execute("INSERT INTO picks (id, pick_date, symbol, yahoo_symbol, type, bench, "
+                        "cost_pct) VALUES ('x', '2026-11-04', 'AMD', 'AMD', 'stock', 'QQQ', 0.5)")
+            old.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT)")
+            old.execute("INSERT INTO config VALUES ('verdict_rule', 'old')")
+            old.commit()
+            old.close()
+            conn = db.connect(path)
+            row = conn.execute("SELECT entry_rule, entry_utc FROM picks").fetchone()
+            self.assertEqual((row["entry_rule"], row["entry_utc"]), (db.ENTRY_OPEN, None))
+            self.assertIsNone(conn.execute(
+                "SELECT 1 FROM config WHERE key='verdict_rule'").fetchone())
+            conn.close()

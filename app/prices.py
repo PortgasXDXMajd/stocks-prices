@@ -1,18 +1,22 @@
-"""Evening run: download daily bars for unfinished picks + QQQ + BTC-USD, then score.
+"""Price job: daily bars for unfinished picks + QQQ + BTC-USD, entry prices at pick
+time, then scoring.
 
-    python -m app.prices
+    python -m app.prices        (python -m app.daily runs the picker first, then this)
 
-Prices come from Yahoo Finance via yfinance (raw, unadjusted daily bars) and are
-stored in the `prices` table. Scoring uses ONLY the `prices` table, so it can be
-re-run offline and tested with synthetic data.
+Prices come from Yahoo Finance via yfinance (raw, unadjusted bars). Daily bars are
+stored in the `prices` table and scoring of the +1/+5/+20 closes uses ONLY that table,
+so it can be re-run offline and tested with synthetic data.
 
-Rules (BUILD_PROMPT.md section 1):
+Rules (see db.CONFIG):
   * US trading-day calendar = dates on which QQQ has a daily bar.
-  * Stock: entry_date = first trading day >= pick_date; entry = pick OPEN that day,
-    bench_entry = QQQ OPEN that day. dN = Nth trading day strictly after entry_date.
-  * Crypto: entry_date = pick_date; entry = CLOSE of the pick_date UTC daily bar,
-    bench_entry = BTC-USD close of that bar. dN = Nth trading day strictly after
-    pick_date, priced at the crypto UTC daily close on dN.
+  * Entry, current rule (entry_rule 'pick_time'): the close of the last complete
+    1-minute bar before the moment the pick was made (run_utc), for the pick and its
+    benchmark, so the entry never includes a price from after the pick. entry_date = New
+    York date of the pick. dN = Nth trading day strictly after entry_date; pN/bN = closes
+    on dN (crypto: UTC daily close on dN).
+  * Entry, old rule (entry_rule 'open', picks made before the open on 2026-11-04/06):
+    stock = OPEN of the first trading day >= pick_date (QQQ open as benchmark); crypto =
+    close of the pick_date UTC daily bar.
   * Bars are used only once they are complete (no look-ahead, no partial bars).
   * A missing price stays NULL with a note and is retried; after max_missing_runs
     runs in a row it is marked "not covered by price feed" and no longer retried.
@@ -144,6 +148,98 @@ def fetch_bars(symbols: list[str], start: str, end: str | None = None) -> dict[s
     return bars
 
 
+MINUTE_LOOKBACK = timedelta(minutes=10)  # entry bar must end at most this long before the pick
+
+
+def _minute_download(symbols: list[str], start: datetime, end: datetime):
+    import yfinance as yf
+
+    try:
+        return yf.download(
+            symbols, start=start, end=end, auto_adjust=False, group_by="ticker",
+            interval="1m", prepost=False, progress=False, threads=True,
+        )
+    except Exception as e:  # never crash the run
+        log(f"yfinance 1m download failed for {', '.join(symbols)}: {type(e).__name__}: {e}")
+        return None
+
+
+def fetch_minute_prices(symbols: list[str], at_utc: datetime) -> dict[str, tuple[float, str]]:
+    """Price at a moment: {symbol: (price, bar_start_utc_iso)}.
+
+    The price is the close of the last COMPLETE 1-minute bar before at_utc (bar start +
+    1 minute <= at_utc), at most MINUTE_LOOKBACK old. Regular session only for stocks, so
+    outside US market hours stocks get no price (never a stale one). Yahoo keeps 1-minute
+    bars for a few weeks only. This is a network boundary (tests mock it).
+    """
+    import pandas as pd
+
+    if at_utc.tzinfo is None:
+        at_utc = at_utc.replace(tzinfo=timezone.utc)
+    at_utc = at_utc.astimezone(timezone.utc)
+    symbols = sorted({s.strip().upper() for s in symbols if s and s.strip()})
+    if not symbols:
+        return {}
+    df = _minute_download(symbols, at_utc - MINUTE_LOOKBACK - timedelta(minutes=5),
+                          at_utc + timedelta(minutes=1))
+    out: dict[str, tuple[float, str]] = {}
+    for s in symbols:
+        try:
+            sub = _frame_for(df, s, len(symbols))
+            if sub is None or sub.empty:
+                continue
+            colmap = {str(c).strip().lower(): c for c in sub.columns}
+            closes = sub[colmap["close"]].dropna()
+            best = None
+            for ts, c in closes.items():
+                t = pd.Timestamp(ts)
+                t = (t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")).to_pydatetime()
+                end = t + timedelta(minutes=1)
+                if end <= at_utc and at_utc - end <= MINUTE_LOOKBACK:
+                    v = _num(c)
+                    if v is not None and v > 0 and (best is None or t > best[1]):
+                        best = (v, t)
+            if best:
+                out[s] = (best[0], db.utc_iso(best[1]))
+        except Exception as e:
+            log(f"could not parse 1m bars for {s}: {type(e).__name__}: {e}")
+    return out
+
+
+def fill_pick_time_entries(conn: sqlite3.Connection) -> int:
+    """Fill missing entry prices of 'pick_time' picks from 1-minute bars at run_utc.
+
+    Never overwrites a stored value. Fields that already gave up are not retried.
+    Returns the number of picks that got a value.
+    """
+    max_miss = int(db.get_config(conn, "max_missing_runs"))
+    rows = conn.execute(
+        "SELECT * FROM picks WHERE entry_rule = ? AND run_utc IS NOT NULL "
+        "AND (entry_price IS NULL OR bench_entry IS NULL)", (db.ENTRY_PICK_TIME,)
+    ).fetchall()
+    filled = 0
+    for r in rows:
+        misses = _load_misses(conn, r["id"])
+        want = [(f, sym) for f, sym in (("entry_price", r["yahoo_symbol"]), ("bench_entry", r["bench"]))
+                if r[f] is None and misses.get(f, 0) < max_miss]
+        if not want:
+            continue
+        at = datetime.fromisoformat(r["run_utc"].replace("Z", "+00:00"))
+        got = fetch_minute_prices([sym for _, sym in want], at)
+        sets, vals = [], []
+        for f, sym in want:
+            if sym.upper() in got:
+                sets.append(f"{f} = COALESCE({f}, ?)")
+                vals.append(got[sym.upper()][0])
+        if r["yahoo_symbol"].upper() in got and r["entry_utc"] is None:
+            sets.append("entry_utc = ?")
+            vals.append(got[r["yahoo_symbol"].upper()][1])
+        if sets:
+            conn.execute(f"UPDATE picks SET {', '.join(sets)} WHERE id = ?", vals + [r["id"]])
+            filled += 1
+    return filled
+
+
 def upsert_bars(conn: sqlite3.Connection, bars: dict, source: str = "yahoo") -> int:
     """Insert/update bars. A NULL from the feed never overwrites a stored value."""
     n = 0
@@ -213,6 +309,15 @@ class _Prices:
         return v if v is not None and v > 0 else None
 
 
+def _ny_date(utc_iso: str | None) -> str | None:
+    if not utc_iso:
+        return None
+    t = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(db.NEW_YORK).date().isoformat()
+
+
 def _pct(p: float | None, base: float | None) -> float | None:
     if p is None or base is None or base == 0:
         return None
@@ -245,8 +350,12 @@ def _score_pick(conn, pick: dict, cal: list[str], clock: _Clock, prices: _Prices
     pick_date = pick["pick_date"]
     misses = _load_misses(conn, pid)
 
+    pick_time = pick.get("entry_rule") == db.ENTRY_PICK_TIME
     # Entry date and the 1st/5th/20th US trading day after it.
-    if crypto:
+    if pick_time:
+        entry_date = pick.get("entry_date") or _ny_date(pick.get("run_utc")) or pick_date
+        first_after = bisect_right(cal, entry_date)
+    elif crypto:
         entry_date = pick_date
         first_after = bisect_right(cal, pick_date)
     else:
@@ -278,14 +387,19 @@ def _score_pick(conn, pick: dict, cal: list[str], clock: _Clock, prices: _Prices
         if d is None:
             new[field] = None
             continue
-        what = f"no {label} {kind} for {d}"
+        at_pick = pick_time and field in ("entry_price", "bench_entry")
+        what = (f"no {label} price at pick time {pick.get('run_utc')}" if at_pick
+                else f"no {label} {kind} for {d}")
         if misses.get(field, 0) >= max_miss:
             # Given up: do not try this field again.
             new[field] = keep_old
             if keep_old is None:
                 notes.append(f"{field}: not covered by price feed ({what})")
             continue
-        val = prices.get(ysym, d, kind) if ready(d) else None
+        if at_pick:  # filled from 1-minute bars by fill_pick_time_entries()
+            val = pick.get(field)
+        else:
+            val = prices.get(ysym, d, kind) if ready(d) else None
         if val is None:
             val = keep_old  # never erase a value we already had for the same date
         new[field] = val
@@ -293,7 +407,7 @@ def _score_pick(conn, pick: dict, cal: list[str], clock: _Clock, prices: _Prices
             if field in misses:
                 conn.execute("DELETE FROM misses WHERE pick_id = ? AND field = ?", (pid, field))
             continue
-        if not ready(d):
+        if not at_pick and not ready(d):
             continue  # not due yet: bar not complete
         count = misses.get(field, 0)
         if count_misses:
@@ -416,6 +530,9 @@ def main(now_utc: datetime | None = None) -> int:
     n_bars = upsert_bars(conn, strip_partial_bars(bars, now_utc))
     no_data = [s for s in symbols if not bars.get(s)]
     feed_down = db.STOCK_BENCH in no_data
+    entries = fill_pick_time_entries(conn)
+    if entries:
+        print(f"entry price at pick time filled for {entries} pick(s)")
     changed = score_all(conn, now_utc, count_misses=not feed_down)
 
     counts = dict(conn.execute(

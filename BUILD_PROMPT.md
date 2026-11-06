@@ -1,5 +1,7 @@
 # Build prompt: Morning Picks app (paste into Claude Code, run inside this repo)
 
+> **Superseded in part (2026-11-06):** the app now runs once per US trading day right after the open (`daily-picks` workflow), enters picks at the price at pick time, and reports price changes without a PASS/FAIL verdict. See README.md for what runs now; this file is the original spec.
+
 You are working in my repo `morning-picks-prices` (GitHub: `PortgasXDXMajd/stocks-prices`). Build a small, self-contained Python app that runs a **paper-trading experiment**: every weekday morning it asks Claude (via the Anthropic API, with web search) to pick up to 3 stocks or crypto assets from the news, and every evening it downloads prices and scores those picks against a benchmark. **No money is ever traded. The app must never call a brokerage or place orders.**
 
 Read this whole prompt before writing code. Ask me only if something is truly ambiguous; otherwise make the sensible choice and note it in the README.

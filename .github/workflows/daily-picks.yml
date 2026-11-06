@@ -1,0 +1,72 @@
+name: daily-picks
+
+# One run per US trading day, right after the open. It asks Claude for picks (entered at
+# their live price in the minute they are made), then updates prices: entry prices of new
+# picks and the +1/+5/+20 trading-day closes of older picks. Paper only: no orders, ever.
+
+on:
+  schedule:
+    # Mon-Fri 14:35 UTC = 09:35 New York / 15:35 Berlin (EST, Nov-Mar; 10:35 New York in
+    # summer time). GitHub cron is best effort and can start hours late or drop a run, so
+    # backups follow at off-peak minutes, all inside the US session (latest 19:07 UTC =
+    # 14:07 New York). Only the first run that gets through picks (one picking pass per
+    # day); later ones exit without changing anything.
+    - cron: "35 14 * * 1-5"
+    - cron: "47 15 * * 1-5"
+    - cron: "13 17 * * 1-5"
+    - cron: "7 19 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Testing only: pick even outside the US session (sets FORCE=1)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: picks-db
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      # Check out the branch HEAD as it is when the job starts (not github.sha), so a run
+      # that waited in the picks-db queue sees the database the previous run pushed.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Pick (Claude + web search), then update prices and report
+        id: run
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ vars.MODEL }}
+          FORCE: ${{ inputs.force && '1' || '' }}
+          PRICES_ALWAYS: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        run: python -m app.daily
+
+      # Runs even if the step above failed (e.g. Claude API error), so whatever was stored
+      # (prices, other results) is still saved; the job stays red in that case.
+      - name: Commit data/ if changed
+        if: always() && steps.run.conclusion != 'skipped'
+        run: |
+          git config user.name "morning-picks-bot"
+          git config user.email "morning-picks-bot@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then echo "nothing to commit"; exit 0; fi
+          git commit -m "daily: $(date -u +%F)"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin HEAD:"${GITHUB_REF_NAME}"

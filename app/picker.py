@@ -1,4 +1,6 @@
-"""Morning run: ask Claude (with web search) for up to 3 news-driven picks, validate, store.
+"""Daily pick run, right after the US open: ask Claude (with web search) for up to 3
+news-driven picks, validate, store. Entry = price at the moment of the pick (filled by
+app.prices from 1-minute bars; app.daily runs both).
 
 Paper experiment only: nothing here (or anywhere in this app) places orders.
 
@@ -40,7 +42,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date, datetime, time as dtime, timedelta
+from datetime import date, datetime, time as dtime, timedelta, timezone
 from typing import Any, Callable
 
 from app import db
@@ -78,7 +80,10 @@ US_EXCHANGES = {
     "PCX", "ARCA",                          # NYSE Arca
     "BTS", "BATS", "CBOE", "BZX",           # Cboe BZX
 }
-CUTOFF = dtime(15, 0)
+# Picks only while the US regular session is open (New York time): the entry is the live
+# price at pick time, which needs a trading market.
+PICK_START = dtime(9, 30)
+PICK_END = dtime(16, 0)
 
 STABLECOINS = {
     "USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "PYUSD", "USDS", "USDD", "FRAX",
@@ -114,7 +119,7 @@ def _berlin(now: datetime | None) -> datetime:
 
 
 def guard(conn: sqlite3.Connection, now_berlin: datetime, force: bool) -> str | None:
-    """Return why this morning run must stop (caller prints it, exits 0), or None to go on."""
+    """Return why this run must not pick (caller prints it, exits 0), or None to go on."""
     now_berlin = _berlin(now_berlin)
     today = now_berlin.date()
     if today.weekday() >= 5:
@@ -125,12 +130,20 @@ def guard(conn: sqlite3.Connection, now_berlin: datetime, force: bool) -> str | 
     run_id = f"{today.isoformat()}-picks"
     if conn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)).fetchone():
         return f"{today}: runs row {run_id} already exists (one picking pass per day), no picks."
-    if now_berlin.time() >= CUTOFF and not force:
+    ny = now_berlin.astimezone(db.NEW_YORK).time().replace(tzinfo=None)
+    if not (PICK_START <= ny < PICK_END) and not force:
         return (
-            f"{today}: Berlin time {now_berlin:%H:%M} is at/after the 15:00 cutoff "
-            "(no look-ahead); no picks. Set FORCE=1 only for testing."
+            f"{today}: New York time {ny:%H:%M} is outside the US session "
+            f"({PICK_START:%H:%M}-{PICK_END:%H:%M}); no picks. Set FORCE=1 only for testing."
         )
     return None
+
+
+def market_open_now(now_utc: datetime) -> bool:
+    """True if QQQ traded in the last few minutes (catches US holidays). Network boundary."""
+    from app import prices
+
+    return db.STOCK_BENCH in prices.fetch_minute_prices([db.STOCK_BENCH], now_utc)
 
 
 def excluded_symbols(conn: sqlite3.Connection, today: date) -> list[str]:
@@ -151,12 +164,10 @@ def build_system_prompt() -> str:
     return """You pick assets for a PAPER-TRADING experiment. No money is traded and no orders are placed; the picks are only recorded and scored afterwards.
 
 THE EXPERIMENT
-Hypothesis: reading the overnight and early-morning news lets you pick names that beat their benchmark over the next 5 US trading days, after costs.
-- Stocks/ETFs are scored against QQQ, crypto against BTC-USD.
-- Stock entry = the official OPEN of the first US trading day on or after today. Crypto entry = the CLOSE of today's daily bar (UTC midnight).
-- The score that decides the experiment: excess return over the 5 US trading days after entry = pick return - benchmark return - round-trip cost. Cost is 0.5% for stocks and 1.0% for crypto. (1-day and 20-day results are recorded too, but the 5-day result is what counts.)
-- The verdict needs at least 60 scored picks with mean 5-day excess return > 0 and t-stat >= 2. A few lucky big winners do not pass it; consistent, well-reasoned edges do.
-- So a pick must plausibly beat its benchmark by MORE than the cost, over about one trading week, starting from the open (stocks) - not just "a good company". News already fully priced in before the open is not an edge.
+Question: do the names you pick from the news, right after the US market opens, go up over the next 1, 5 and 20 US trading days, and do they beat their benchmark?
+- You are called shortly after the US regular session opens (09:30 New York). Each pick is entered at its live price in the minute you give your answer - not at the open, not at yesterday's close.
+- Results: the official close 1, 5 and 20 US trading days after today, compared with the entry price. Stocks/ETFs are compared with QQQ, crypto with BTC-USD, over the same span. Round-trip costs (0.5% stocks, 1.0% crypto) are recorded too.
+- So a pick needs a reason to keep rising from TODAY'S CURRENT PRICE over the coming days to weeks. News that the market already fully priced in (e.g. a stock that gapped up 15% at the open with nothing left to discover) is not an edge; check today's opening move before picking.
 
 RESEARCH (use web search; prefer primary sources and reputable financial news from the last ~24 hours)
 Look for fresh, specific catalysts, for example:
@@ -166,7 +177,7 @@ Look for fresh, specific catalysts, for example:
 - major contracts, partnerships, product launches;
 - index inclusion/removal;
 - analyst upgrades/downgrades and price-target changes from notable firms;
-- unusual volume or pre-market moves with an identifiable cause;
+- unusual volume, pre-market or opening moves with an identifiable cause;
 - crypto: exchange listings, ETF news/flows, protocol upgrades, token unlocks, hacks, regulatory actions.
 Check the facts you rely on (numbers, dates, that the event really happened today/overnight). Prefer catalysts with documented follow-through tendencies (e.g. post-earnings-announcement drift after a beat-and-raise) over one-off hype.
 
@@ -186,7 +197,7 @@ TICKERS - exact symbols, because they are looked up automatically:
 - "type" is exactly "stock" (also for ETFs) or "crypto".
 
 HOW MANY
-- At most 3 picks in total (stocks and/or crypto). Zero is allowed, and zero is BETTER than a weak pick: only pick when you see a concrete, news-driven reason to expect the name to beat its benchmark by more than the cost over the next 5 trading days.
+- At most 3 picks in total (stocks and/or crypto). Zero is allowed, and zero is BETTER than a weak pick: only pick when you see a concrete, news-driven reason to expect the name to rise and beat its benchmark from the current price over the next days to weeks.
 - Each "reason" is at most 200 characters: the specific catalyst with key numbers and why you expect outperformance. "news_url" is the single best source URL for that catalyst.
 
 OUTPUT
@@ -202,12 +213,12 @@ def build_user_prompt(now_berlin: datetime, excluded: list[str], max_searches: i
     return (
         f"Current time: {_WEEKDAYS[now_berlin.weekday()]} {now_berlin:%Y-%m-%d %H:%M} Berlin "
         f"({now_berlin:%Z}), which is {now_ny:%Y-%m-%d %H:%M} in New York.\n"
-        "The US regular session opens at 15:30 Berlin time (09:30 New York); stock picks enter "
-        "at that open (or the next US trading day's open if US markets are closed today). "
-        "Crypto picks enter at today's UTC daily close.\n"
+        "The US regular session opened at 09:30 New York time. Every pick (stock or crypto) "
+        "is entered at its live price in the minute you finish your answer.\n"
         f"You have up to {max_searches} web searches.\n"
         f"EXCLUDED symbols (picked in the last 28 calendar days, do not pick): {excl}\n\n"
-        "Research this morning's news and give today's picks (0 to 3), ending with the JSON object."
+        "Research the overnight and this morning's news (including how the names traded at "
+        "the open) and give today's picks (0 to 3), ending with the JSON object."
     )
 
 
@@ -606,6 +617,8 @@ def _insert_run(conn, run_id, today, started, added, summary, issues, res) -> No
 
 
 def main(now_berlin: datetime | None = None) -> int:
+    """now_berlin is for tests: it fixes both the guard time and the pick time."""
+    fixed_now = now_berlin is not None
     now_berlin = _berlin(now_berlin)
     started = db.utc_iso()
     force = (os.environ.get("FORCE") or "").strip() == "1"
@@ -614,6 +627,10 @@ def main(now_berlin: datetime | None = None) -> int:
         stop = guard(conn, now_berlin, force)
         if stop:
             print(stop)
+            return 0
+        if not force and not market_open_now(now_berlin.astimezone(timezone.utc)):
+            print(f"{now_berlin.date()}: no QQQ trades in the last minutes (US market closed, "
+                  "e.g. a holiday, or Yahoo down); no picks. A later run today can retry.")
             return 0
 
         api_key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
@@ -644,6 +661,7 @@ def main(now_berlin: datetime | None = None) -> int:
             msg = str(e).replace(api_key, "***") if api_key else str(e)
             print(f"ERROR: Anthropic API call failed: {msg}", file=sys.stderr)
             return 1
+        picked_at = now_berlin.astimezone(timezone.utc) if fixed_now else db.utc_now()
 
         issues: list[str] = list(res.get("api_notes") or [])
         stop_reason = res.get("stop_reason")
@@ -688,17 +706,21 @@ def main(now_berlin: datetime | None = None) -> int:
                 continue
             accepted.append(row)
 
-        run_utc = db.utc_iso()
+        # Pick time = when Claude's answer arrived (validation lookups come after, but they
+        # only check listings; the entry is priced at this moment, not later).
+        pick_utc = picked_at or db.utc_now()
+        run_utc = db.utc_iso(pick_utc)
+        entry_date = pick_utc.astimezone(db.NEW_YORK).date().isoformat()
         added = 0
         for r in accepted:
             cur = conn.execute(
                 "INSERT OR IGNORE INTO picks (id, pick_date, run_utc, symbol, yahoo_symbol, name, "
-                "type, reason, news_url, bench, cost_pct, status, notes, model) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_entry', '', ?)",
+                "type, reason, news_url, bench, cost_pct, status, notes, model, entry_date, "
+                "entry_rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_entry', '', ?, ?, ?)",
                 (
                     db.pick_id(today_s, r["symbol"]), today_s, run_utc, r["symbol"],
                     r["yahoo_symbol"], r["name"], r["type"], r["reason"], r["news_url"],
-                    r["bench"], r["cost_pct"], model_label,
+                    r["bench"], r["cost_pct"], model_label, entry_date, db.ENTRY_PICK_TIME,
                 ),
             )
             added += cur.rowcount
@@ -706,7 +728,7 @@ def main(now_berlin: datetime | None = None) -> int:
         _insert_run(conn, run_id, today_s, started, added, summary, issues, res)
         conn.commit()
 
-        # Refresh REPORT.md so the morning commit already shows today's picks.
+        # Refresh REPORT.md so the commit already shows today's picks.
         try:
             from app import report
 

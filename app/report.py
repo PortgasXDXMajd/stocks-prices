@@ -1,13 +1,11 @@
-"""Write data/REPORT.md: rules, scorecard + verdict, all picks, recent runs.
+"""Write data/REPORT.md: how much each pick moved after 1/5/20 trading days.
 
     python -m app.report
 """
 
 from __future__ import annotations
 
-import math
 import sqlite3
-import statistics
 from datetime import date
 from pathlib import Path
 
@@ -81,45 +79,26 @@ def _mean(xs: list[float]) -> float | None:
     return sum(xs) / len(xs) if xs else None
 
 
-def scorecard(conn: sqlite3.Connection, today: date) -> dict:
-    picks = conn.execute("SELECT ret5, bret5, ex5, ex20 FROM picks").fetchall()
-    scored = [p for p in picks if p["ex5"] is not None]
-    ex5 = [p["ex5"] for p in scored]
-    n = len(ex5)
-    mean = _mean(ex5)
-    sd = statistics.stdev(ex5) if n >= 2 else None
-    t = mean / (sd / math.sqrt(n)) if n >= 2 and sd and sd > 0 else None
-    ex20 = [p["ex20"] for p in picks if p["ex20"] is not None]
-    hits = sum(1 for p in scored if p["ret5"] is not None and p["ret5"] > 0)
-
-    min_n = int(db.get_config(conn, "verdict_min_n"))
-    min_t = float(db.get_config(conn, "verdict_min_t"))
-    finish = date.fromisoformat(db.get_config(conn, "finish_date"))
-    if n >= min_n or today > finish:
-        passed = n >= min_n and mean is not None and mean > 0 and t is not None and t >= min_t
-        if passed:
-            verdict = (f"PASS: n = {n}, mean ex5 {pct(mean)}, t = {t:.2f} "
-                       f"(needs n >= {min_n}, mean > 0, t >= {min_t:g})")
-        else:
-            why = []
-            if n < min_n:
-                why.append(f"n = {n} < {min_n}")
-            if mean is None:
-                why.append("no ex5 results")
-            elif mean <= 0:
-                why.append(f"mean ex5 {pct(mean)} is not > 0")
-            if mean is not None and (t is None or t < min_t):
-                why.append(f"t = {num(t)} < {min_t:g}")
-            verdict = f"FAIL: the idea is dead ({'; '.join(why)})"
-    else:
-        verdict = f"No verdict yet: {n} of {min_n}"
-    return {
-        "logged": len(picks), "n": n, "hits": hits,
-        "mean_ret5": _mean([p["ret5"] for p in scored if p["ret5"] is not None]),
-        "mean_bret5": _mean([p["bret5"] for p in scored if p["bret5"] is not None]),
-        "mean_ex5": mean, "sd_ex5": sd, "t_ex5": t,
-        "n20": len(ex20), "mean_ex20": _mean(ex20), "verdict": verdict,
-    }
+def scorecard(conn: sqlite3.Connection, today: date | None = None) -> dict:
+    """Per horizon: how many picks have a result, how many went up, average moves."""
+    picks = conn.execute("SELECT symbol, pick_date, ret1, ret5, ret20, bret1, bret5, bret20 "
+                         "FROM picks").fetchall()
+    out = {"logged": len(picks), "horizons": []}
+    for n in db.HORIZONS:
+        done = [p for p in picks if p[f"ret{n}"] is not None]
+        rets = [p[f"ret{n}"] for p in done]
+        diffs = [p[f"ret{n}"] - p[f"bret{n}"] for p in done if p[f"bret{n}"] is not None]
+        best = max(done, key=lambda p: p[f"ret{n}"], default=None)
+        worst = min(done, key=lambda p: p[f"ret{n}"], default=None)
+        out["horizons"].append({
+            "n": n, "count": len(done), "up": sum(1 for r in rets if r > 0),
+            "mean": _mean(rets),
+            "mean_bench": _mean([p[f"bret{n}"] for p in done if p[f"bret{n}"] is not None]),
+            "mean_vs_bench": _mean(diffs),
+            "best": (best["symbol"], best["pick_date"], best[f"ret{n}"]) if best else None,
+            "worst": (worst["symbol"], worst["pick_date"], worst[f"ret{n}"]) if worst else None,
+        })
+    return out
 
 
 # --------------------------------------------------------------------------- render
@@ -128,43 +107,58 @@ def scorecard(conn: sqlite3.Connection, today: date) -> dict:
 def _rules(conn: sqlite3.Connection) -> str:
     g = lambda k: db.get_config(conn, k)  # noqa: E731
     return "\n".join([
-        f"- **Hypothesis:** {g('hypothesis')}",
-        f"- **Pick window:** {g('first_pick_date')} to {g('last_pick_date')}; scoring "
-        f"runs until {g('finish_date')}. Up to {g('max_picks_per_day')} picks per morning "
-        f"(zero is allowed), made before {g('pick_cutoff_berlin')} Berlin.",
+        f"- **Question:** {g('hypothesis')}",
+        f"- **When:** one run each US trading day right after the open (New York "
+        f"{g('pick_window_new_york')}). Up to {g('max_picks_per_day')} picks (zero is allowed), "
+        f"from {g('first_pick_date')} to {g('last_pick_date')}; results until {g('finish_date')}.",
         f"- **Allowed:** {g('allowed')}",
         f"- **Not allowed:** {g('not_allowed')}",
-        "- **Entry:** stock = official open on the first US trading day on or after the "
-        "pick date; crypto = close of the pick-date UTC daily bar.",
-        "- **Scoring:** close on the 1st, 5th and 20th US trading day after entry "
-        "(crypto: after the pick date). US trading days = days with a QQQ bar.",
+        f"- **Entry price:** {g('entry_rule')}",
+        f"- **Results:** {g('scoring_rule')}",
         f"- **Benchmark:** {g('bench_stock')} for stocks, {g('bench_crypto')} for crypto, "
-        "same dates. `exN = retN - bretN - cost`, cost "
-        f"{g('cost_pct_stock')}% stock / {g('cost_pct_crypto')}% crypto (round trip).",
-        f"- **Verdict (fixed in advance):** {g('verdict_rule')}",
+        "measured over the same time span as the pick.",
         f"- **Prices:** {g('missing_price_rule')} After {g('max_missing_runs')} failed "
         "runs a value is marked \"not covered by price feed\". Paper trading only: "
         "no orders are ever placed.",
     ])
 
 
+def _pick_md(x) -> str:
+    return DASH if x is None else f"{cell(x[0])} {pct(x[2])} ({x[1][5:]})"
+
+
 def _scorecard_md(sc: dict) -> str:
-    n = sc["n"]
-    hit = f"{sc['hits']} of {n} ({sc['hits'] / n * 100:.0f}%)" if n else DASH
-    ex5 = pct(sc["mean_ex5"])
-    if sc["mean_ex5"] is not None:
-        ex5 += f" (sd {num(sc['sd_ex5'])}, t {num(sc['t_ex5'])})"
-    rows = [
-        ["Picks logged", str(sc["logged"])],
-        ["Scored at 5 days (n)", str(n)],
-        ["Hit rate (ret5 > 0)", hit],
-        ["Mean ret5", pct(sc["mean_ret5"])],
-        ["Mean bench ret5", pct(sc["mean_bret5"])],
-        ["Mean ex5", ex5],
-        [f"Mean ex20 (n = {sc['n20']})", pct(sc["mean_ex20"])],
-        ["**Verdict**", f"**{cell(sc['verdict'])}**"],
-    ]
-    return table(["Metric", "Value"], rows, ["l", "r"])
+    rows = []
+    for h in sc["horizons"]:
+        c = h["count"]
+        rows.append([
+            f"+{h['n']} day{'s' if h['n'] > 1 else ''}", str(c),
+            f"{h['up']} of {c} ({h['up'] / c * 100:.0f}%)" if c else DASH,
+            pct(h["mean"]), pct(h["mean_bench"]), pct(h["mean_vs_bench"]),
+            _pick_md(h["best"]), _pick_md(h["worst"]),
+        ])
+    head = f"Picks logged: **{sc['logged']}**\n\n"
+    return head + table(
+        ["After", "Picks with result", "Went up", "Average change", "Benchmark average",
+         "Average vs benchmark", "Best", "Worst"],
+        rows, ["l", "r", "r", "r", "r", "r", "l", "l"],
+    )
+
+
+def _move(p, n: int) -> str:
+    if p[f"ret{n}"] is None:
+        return DASH
+    return f"{pct(p[f'ret{n}'])} ({price(p[f'p{n}'])})"
+
+
+def _when(p) -> str:
+    """When the entry price was taken, in Berlin time."""
+    from datetime import datetime
+
+    if p["entry_rule"] == db.ENTRY_PICK_TIME and p["run_utc"]:
+        t = datetime.fromisoformat(p["run_utc"].replace("Z", "+00:00")).astimezone(db.BERLIN)
+        return f"{t:%Y-%m-%d %H:%M}"
+    return f"{p['entry_date'] or p['pick_date']} open"
 
 
 def _picks_md(conn: sqlite3.Connection) -> str:
@@ -175,19 +169,17 @@ def _picks_md(conn: sqlite3.Connection) -> str:
         return "_No picks yet._"
     rows = []
     for p in picks:
-        entry = price(p["entry_price"])
-        if p["entry_price"] is not None and p["entry_date"]:
-            entry += f" ({p['entry_date'][5:]})"
+        bench = " / ".join(pct(p[f"bret{n}"]) if p[f"bret{n}"] is not None else DASH
+                           for n in db.HORIZONS)
         rows.append([
-            p["pick_date"], f"**{cell(p['symbol'])}**", cell(p["type"]), entry,
-            pct(p["ret1"]), pct(p["ret5"]), pct(p["ret20"]), pct(p["bret5"]),
-            pct(p["ex5"]), pct(p["ex20"]), cell(p["status"]),
-            link(p["reason"], p["news_url"]), cell(p["notes"]),
+            _when(p), f"**{cell(p['symbol'])}**", cell(p["type"]), price(p["entry_price"]),
+            _move(p, 1), _move(p, 5), _move(p, 20), f"{cell(p['bench'])} {bench}",
+            cell(p["status"]), link(p["reason"], p["news_url"]), cell(p["notes"]),
         ])
     return table(
-        ["Date", "Symbol", "Type", "Entry", "+1d", "+5d", "+20d", "Bench +5d",
-         "ex5", "ex20", "Status", "Reason", "Notes"],
-        rows, ["l", "l", "l", "r", "r", "r", "r", "r", "r", "r", "l", "l", "l"],
+        ["Picked (Berlin)", "Symbol", "Type", "Entry price", "+1 day", "+5 days", "+20 days",
+         "Benchmark +1 / +5 / +20", "Status", "Reason", "Notes"],
+        rows, ["l", "l", "l", "r", "r", "r", "r", "r", "l", "l", "l"],
     )
 
 
@@ -216,28 +208,28 @@ def _runs_md(conn: sqlite3.Connection) -> str:
     )
 
 
-def render(conn: sqlite3.Connection, today: date) -> str:
+def render(conn: sqlite3.Connection, today: date | None = None) -> str:
     sc = scorecard(conn, today)
     return "\n".join([
-        "# Morning Picks: paper-trading scorecard",
+        "# Morning Picks: how did the picks do?",
         "",
         f"_Generated {db.utc_iso()}. Paper experiment only: nothing is ever traded._",
         "",
-        "## Rules, in short",
-        "",
-        _rules(conn),
-        "",
-        "## Scorecard",
+        "## Summary",
         "",
         _scorecard_md(sc),
         "",
         "## All picks (newest first)",
         "",
-        "Returns are percent changes from the entry price to the close on the 1st/5th/20th "
-        "US trading day; `ex` = pick return minus benchmark return minus cost. "
-        f"{DASH} means not available yet.",
+        "Each cell is the change from the entry price to the official close 1, 5 and 20 US "
+        "trading days after the pick day, with that close in brackets. The benchmark column "
+        f"is the same change for QQQ (stocks) or BTC-USD (crypto). {DASH} means not available yet.",
         "",
         _picks_md(conn),
+        "",
+        "## Rules, in short",
+        "",
+        _rules(conn),
         "",
         "## Last 15 runs",
         "",
