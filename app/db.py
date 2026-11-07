@@ -23,10 +23,12 @@ HORIZONS = (1, 5, 20)
 # Changed 2026-11-06 (user decision): one daily run right after the US open; a pick's
 # entry is the live price in the minute it is made; the report shows how much each pick
 # moved after 1/5/20 trading days. The PASS/FAIL verdict was dropped.
+# 2026-11-07 (user decision): the 5 picks made under the old rules were deleted; the
+# experiment starts fresh on 2026-11-09.
 CONFIG = {
     "hypothesis": "Do the names Claude picks from the news right after the US open go up "
     "over the next 1, 5 and 20 US trading days, and by how much (also vs QQQ / BTC-USD)?",
-    "first_pick_date": "2026-11-04",
+    "first_pick_date": "2026-11-09",
     "last_pick_date": "2027-02-06",
     "finish_date": "2027-03-10",
     "max_picks_per_day": "3",
@@ -38,8 +40,7 @@ CONFIG = {
     "pick_window_new_york": "09:30-16:00",
     "entry_rule": "Price at pick time: close of the last 1-minute Yahoo bar that starts at or "
     "before the moment the pick is made (at most 10 minutes earlier), for the pick and its "
-    "benchmark. Picks from 2026-11-04 and 2026-11-06, made before the open under the old "
-    "rule, entered at the official open of their pick day.",
+    "benchmark.",
     "scoring_rule": "Official close on the 1st, 5th and 20th US trading day after the pick "
     "day (crypto: UTC daily close on those dates). US trading days = dates on which QQQ has "
     "a daily bar.",

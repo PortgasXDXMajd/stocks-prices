@@ -14,7 +14,7 @@ Rules (see db.CONFIG):
     benchmark, so the entry never includes a price from after the pick. entry_date = New
     York date of the pick. dN = Nth trading day strictly after entry_date; pN/bN = closes
     on dN (crypto: UTC daily close on dN).
-  * Entry, old rule (entry_rule 'open', picks made before the open on 2026-11-04/06):
+  * Entry, old rule (entry_rule 'open'; no such picks remain since 2026-11-07, kept for old DBs):
     stock = OPEN of the first trading day >= pick_date (QQQ open as benchmark); crypto =
     close of the pick_date UTC daily bar.
   * Bars are used only once they are complete (no look-ahead, no partial bars).

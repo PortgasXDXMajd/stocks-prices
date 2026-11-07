@@ -11,7 +11,7 @@ Results: [`data/REPORT.md`](data/REPORT.md). Raw data: `data/picks.db` (SQLite, 
 Also stored in the `config` table of the database.
 
 - **One run per US trading day, right after the open** (scheduled 09:35 New York = 15:35 Berlin). Picks are only made while the US regular session is open (09:30-16:00 New York) and not on US holidays.
-- **Per day:** 0 to 3 picks in total (stocks and/or crypto), from 2026-11-04 to 2027-02-06. Results are followed until 2027-03-10.
+- **Per day:** 0 to 3 picks in total (stocks and/or crypto), from 2026-11-09 to 2027-02-06. Results are followed until 2027-03-10.
 - **Allowed:** stocks/ETFs listed on a US exchange (Nasdaq, NYSE, NYSE American, NYSE Arca, Cboe) with a last close above $1; non-stablecoin crypto in the top 250 by market cap.
 - **Not allowed:** OTC/pink sheets, foreign-only listings, coins outside the top 250, stablecoins, and any symbol picked in the last 28 calendar days (~20 trading days).
 - **Entry price = price at pick time:** the close of the last complete 1-minute Yahoo bar before the moment Claude's answer arrived, for the pick and for its benchmark. So the entry never contains a price from after the pick, even if GitHub starts the run late.
@@ -19,7 +19,7 @@ Also stored in the `config` table of the database.
 - **Change:** `retN = (pN / entry - 1) * 100`, benchmark `bretN = (bN / bench_entry - 1) * 100`, percent with 2 decimals. The database also stores `exN = retN - bretN - cost` (cost 0.5% stocks, 1.0% crypto, round trip).
 - **Never invent a price.** A missing price stays empty with a note and is retried on the next run.
 
-The first five picks (AMD, ANET, DUOL on 2026-11-04; ABNB, NET on 2026-11-06) were made before the open under the earlier rules, so their entry price is the official open of their pick day (`entry_rule = 'open'`). The three 2026-11-04 picks were imported from the old system. Everything after that uses the price at pick time (`entry_rule = 'pick_time'`).
+The experiment starts on 2026-11-09. Five earlier picks (2026-11-04 and 2026-11-06), made under older rules with the open as entry price, were deleted on 2026-11-07; they are still in the git history.
 
 ## How it works
 
