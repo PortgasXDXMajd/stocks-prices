@@ -19,7 +19,7 @@ Also stored in the `config` table of the database.
 - **Change:** `retN = (pN / entry - 1) * 100`, benchmark `bretN = (bN / bench_entry - 1) * 100`, percent with 2 decimals. The database also stores `exN = retN - bretN - cost` (cost 0.5% stocks, 1.0% crypto, round trip).
 - **Never invent a price.** A missing price stays empty with a note and is retried on the next run.
 
-The first five picks (AMD, ANET, DUOL on 2026-11-04; ABNB, NET on 2026-11-06) were made before the open under the earlier rules, so their entry price is the official open of their pick day (`entry_rule = 'open'`). Everything after that uses the price at pick time (`entry_rule = 'pick_time'`).
+The first five picks (AMD, ANET, DUOL on 2026-11-04; ABNB, NET on 2026-11-06) were made before the open under the earlier rules, so their entry price is the official open of their pick day (`entry_rule = 'open'`). The three 2026-11-04 picks were imported from the old system. Everything after that uses the price at pick time (`entry_rule = 'pick_time'`).
 
 ## How it works
 
@@ -30,7 +30,6 @@ app/
   prices.py   entry price at pick time (1-minute bars) + daily bars -> +1/+5/+20 closes -> report
   report.py   writes data/REPORT.md
   db.py       SQLite schema, connect(), rules (config table), helpers
-  seed.py     one-off: imported the 3 picks made by the old system on 2026-11-04
 tests/        stdlib unittest, no network
 data/
   picks.db    the database (committed)
@@ -52,6 +51,7 @@ One GitHub Actions workflow, **`daily-picks`**, runs `python -m app.daily` Mon-F
 2. Optional: a repository variable `MODEL` (Settings -> Secrets and variables -> Actions -> Variables). Unset or empty means `claude-opus-5-5`.
 3. Recommended: a monthly spend limit for the key's workspace in the Anthropic Console (about $25/month is plenty, see cost below).
 4. To run it by hand: Actions -> `daily-picks` -> Run workflow. During the US session it picks (if today has no picks yet) and always updates prices. Tick `force` only for a deliberate test outside the session.
+5. **Dry run on a past date:** fill `test_time` with a Berlin time such as `2026-11-05 15:40`. The run works on a scratch copy of the database, picks as if it were that moment (entry = the 1-minute price then, so the date must be within Yahoo's ~30 days of 1-minute history), fills whatever +1/+5/+20 closes exist by now, shows the report in the run summary and uploads the scratch database as an artifact. Nothing is committed. Note that Claude's web search still sees today's news, so the picks themselves are not a fair backtest; this tests the mechanics. Costs one API call (~$0.70).
 
 ## Local development
 
@@ -117,6 +117,7 @@ sqlite3 data/picks.db "select key, value from config"
 | `FORCE` | (unset) | `1` lifts the US-session and holiday checks. Testing only. |
 | `PRICES_ALWAYS` | (unset) | `1` runs the price step even if it already ran today (manual workflow runs set it). |
 | `PICKS_DB` | `data/picks.db` | Path of the SQLite database. |
+| `TEST_NOW` | (unset) | Berlin `YYYY-MM-DD HH:MM`: pick as if it were that moment. Refused unless `PICKS_DB` points to a scratch copy. |
 
 ## Design choices
 
@@ -127,7 +128,7 @@ sqlite3 data/picks.db "select key, value from config"
 - **Exclusion window:** "picked in the last 20 US trading days" is approximated as the last 28 calendar days.
 - **API settings (checked against Anthropic's docs on 2026-11-05):** web search tool `web_search_20260209` (falls back to `web_search_20250305` if a `MODEL` override rejects it); `output_config: {"effort": EFFORT}`; adaptive thinking; `max_tokens` 16000 (thinking counts toward it); server-side fallback on refusals (`server-side-fallback-2026-07-01` beta), dropped automatically if rejected. `pause_turn` is continued up to 6 requests; 408/409/429/5xx/529 and network errors are retried with backoff. The API is called with `urllib`; `yfinance` is the only dependency.
 - **A failed API call writes no picks run**, so a backup trigger (or a manual run) can still pick that day during the session. A reply that cannot be parsed counts as 0 picks with the error in `issues`.
-- **History:** the app replaced a whole-market price snapshot job (`fetch_prices.py`, `data/stocks/`, `data/crypto/`), and on 2026-11-06 the separate morning/evening workflows were merged into this one daily run at the open. `BUILD_PROMPT.md` is the original spec; where it differs, this README describes what runs now.
+- **History:** the app replaced a whole-market price snapshot job (`fetch_prices.py`, `data/stocks/`, `data/crypto/`), and on 2026-11-06 the separate morning/evening workflows were merged into this one daily run at the open.
 
 ## Cost per run (rough)
 

@@ -22,6 +22,11 @@ on:
         type: boolean
         required: false
         default: false
+      test_time:
+        description: "Dry run on a past date, Berlin 'YYYY-MM-DD HH:MM' (e.g. 2026-11-05 15:40). Uses a scratch copy of the database; nothing is committed."
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -49,9 +54,18 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Dry run: work on a scratch copy so the real database is never touched.
+      - name: Prepare scratch database (dry run only)
+        if: inputs.test_time != ''
+        run: |
+          mkdir -p "$RUNNER_TEMP/dryrun"
+          cp data/picks.db "$RUNNER_TEMP/dryrun/picks.db"
+          echo "PICKS_DB=$RUNNER_TEMP/dryrun/picks.db" >> "$GITHUB_ENV"
+
       - name: Pick (Claude + web search), then update prices and report
         id: run
         env:
+          TEST_NOW: ${{ inputs.test_time }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MODEL: ${{ vars.MODEL }}
           FORCE: ${{ inputs.force && '1' || '' }}
@@ -60,8 +74,19 @@ jobs:
 
       # Runs even if the step above failed (e.g. Claude API error), so whatever was stored
       # (prices, other results) is still saved; the job stays red in that case.
+      - name: Show dry-run report
+        if: always() && inputs.test_time != ''
+        run: cat "$RUNNER_TEMP/dryrun/REPORT.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dry-run database and report
+        if: always() && inputs.test_time != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dryrun-${{ github.run_id }}
+          path: ${{ runner.temp }}/dryrun/
+
       - name: Commit data/ if changed
-        if: always() && steps.run.conclusion != 'skipped'
+        if: always() && steps.run.conclusion != 'skipped' && inputs.test_time == ''
         run: |
           git config user.name "morning-picks-bot"
           git config user.email "morning-picks-bot@users.noreply.github.com"

@@ -43,6 +43,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, time as dtime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from app import db
@@ -617,7 +618,22 @@ def _insert_run(conn, run_id, today, started, added, summary, issues, res) -> No
 
 
 def main(now_berlin: datetime | None = None) -> int:
-    """now_berlin is for tests: it fixes both the guard time and the pick time."""
+    """now_berlin is for tests: it fixes both the guard time and the pick time.
+
+    TEST_NOW="YYYY-MM-DD HH:MM" (Berlin) does the same from the environment, for a dry run
+    on a past date. It is refused unless PICKS_DB points away from the real database."""
+    test_now = (os.environ.get("TEST_NOW") or "").strip()
+    if now_berlin is None and test_now:
+        if db.db_path().resolve() == Path(db.DB_PATH).resolve():
+            print("ERROR: TEST_NOW needs PICKS_DB set to a scratch copy, never the real "
+                  "database.", file=sys.stderr)
+            return 1
+        try:
+            now_berlin = datetime.strptime(test_now, "%Y-%m-%d %H:%M").replace(tzinfo=db.BERLIN)
+        except ValueError:
+            print(f"ERROR: TEST_NOW={test_now!r} is not 'YYYY-MM-DD HH:MM'.", file=sys.stderr)
+            return 1
+        print(f"TEST RUN as of {now_berlin:%Y-%m-%d %H:%M %Z} on {db.db_path()}")
     fixed_now = now_berlin is not None
     now_berlin = _berlin(now_berlin)
     started = db.utc_iso()

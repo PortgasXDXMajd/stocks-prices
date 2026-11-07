@@ -915,29 +915,47 @@ class PickerMainTests(TempDBTest):
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0], 0)
 
 
-# --------------------------------------------------------------------------- seed
+# --------------------------------------------------------------------------- TEST_NOW
 
 
-class SeedTests(TempDBTest):
-    def test_seed_is_idempotent(self):
-        from app import seed
+class TestNowTests(TempDBTest):
+    response = PickerMainTests.response
 
-        self.assertEqual(seed.main(), 0)
-        self.assertEqual(seed.main(), 0)
+    def run_env(self, env):
+        import app.picker as picker
+
+        with contextlib.ExitStack() as st:
+            self.no_report(st, picker)
+            st.enter_context(mock.patch.dict(os.environ, env))
+            cc = st.enter_context(mock.patch.object(
+                picker, "call_claude", return_value=self.response(GOOD_TEXT)))
+            st.enter_context(mock.patch.object(picker, "yahoo_last_close", side_effect=fake_last_close))
+            st.enter_context(mock.patch.object(picker, "yahoo_exchange", side_effect=fake_exchange))
+            st.enter_context(mock.patch.object(picker, "market_open_now", return_value=True))
+            rc = picker.main()
         self.reopen()
-        rows = self.conn.execute(
-            "SELECT * FROM picks WHERE pick_date='2026-11-04' ORDER BY symbol"
-        ).fetchall()
-        self.assertEqual([r["symbol"] for r in rows], ["AMD", "ANET", "DUOL"])
-        for r in rows:
-            self.assertEqual(r["status"], "pending_entry")
-            self.assertEqual(r["bench"], "QQQ")
-            self.assertEqual(r["cost_pct"], 0.5)
-            self.assertEqual(r["model"], "claude-fable-5-1 (old scheduled task)")
-        run = self.conn.execute("SELECT * FROM runs WHERE id='2026-11-04-picks'").fetchone()
-        self.assertEqual(run["kind"], "picks")
-        self.assertEqual(run["picks_added"], 3)
+        return rc, cc
 
+    def test_test_now_picks_on_that_date(self):
+        rc, cc = self.run_env({"ANTHROPIC_API_KEY": "k", "TEST_NOW": "2026-11-05 15:40"})
+        self.assertEqual(rc, 0)
+        cc.assert_called_once()
+        rows = self.conn.execute("SELECT pick_date, run_utc FROM picks").fetchall()
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertEqual(r["pick_date"], "2026-11-05")
+            self.assertEqual(r["run_utc"], "2026-11-05T14:40:00Z")
+
+    def test_test_now_refused_on_real_db(self):
+        rc, cc = self.run_env({"ANTHROPIC_API_KEY": "k", "TEST_NOW": "2026-11-05 15:40",
+                               "PICKS_DB": str(db.DB_PATH)})
+        self.assertEqual(rc, 1)
+        cc.assert_not_called()
+
+    def test_test_now_bad_format(self):
+        rc, cc = self.run_env({"ANTHROPIC_API_KEY": "k", "TEST_NOW": "yesterday"})
+        self.assertEqual(rc, 1)
+        cc.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()
