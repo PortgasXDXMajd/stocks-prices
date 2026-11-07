@@ -946,6 +946,12 @@ class TestNowTests(TempDBTest):
             self.assertEqual(r["pick_date"], "2026-11-05")
             self.assertEqual(r["run_utc"], "2026-11-05T14:40:00Z")
 
+    def test_test_now_date_only_means_0940_new_york(self):
+        rc, _ = self.run_env({"ANTHROPIC_API_KEY": "k", "TEST_NOW": "2026-11-06"})
+        self.assertEqual(rc, 0)
+        r = self.conn.execute("SELECT pick_date, run_utc FROM picks").fetchone()
+        self.assertEqual((r["pick_date"], r["run_utc"]), ("2026-11-06", "2026-11-06T14:40:00Z"))
+
     def test_test_now_refused_on_real_db(self):
         rc, cc = self.run_env({"ANTHROPIC_API_KEY": "k", "TEST_NOW": "2026-11-05 15:40",
                                "PICKS_DB": str(db.DB_PATH)})

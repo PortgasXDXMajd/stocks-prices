@@ -629,9 +629,16 @@ def main(now_berlin: datetime | None = None) -> int:
                   "database.", file=sys.stderr)
             return 1
         try:
-            now_berlin = datetime.strptime(test_now, "%Y-%m-%d %H:%M").replace(tzinfo=db.BERLIN)
+            if len(test_now) == 10:  # date only: 09:40 New York that day, just after the open
+                d = date.fromisoformat(test_now)
+                now_berlin = datetime(d.year, d.month, d.day, 9, 40,
+                                      tzinfo=db.NEW_YORK).astimezone(db.BERLIN)
+            else:
+                now_berlin = datetime.strptime(test_now.replace("T", " "), "%Y-%m-%d %H:%M"
+                                               ).replace(tzinfo=db.BERLIN)
         except ValueError:
-            print(f"ERROR: TEST_NOW={test_now!r} is not 'YYYY-MM-DD HH:MM'.", file=sys.stderr)
+            print(f"ERROR: TEST_NOW={test_now!r} is not 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM'.",
+                  file=sys.stderr)
             return 1
         print(f"TEST RUN as of {now_berlin:%Y-%m-%d %H:%M %Z} on {db.db_path()}")
     fixed_now = now_berlin is not None

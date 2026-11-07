@@ -51,7 +51,7 @@ One GitHub Actions workflow, **`daily-picks`**, runs `python -m app.daily` Mon-F
 2. Optional: a repository variable `MODEL` (Settings -> Secrets and variables -> Actions -> Variables). Unset or empty means `claude-opus-5-5`.
 3. Recommended: a monthly spend limit for the key's workspace in the Anthropic Console (about $25/month is plenty, see cost below).
 4. To run it by hand: Actions -> `daily-picks` -> Run workflow. During the US session it picks (if today has no picks yet) and always updates prices. Tick `force` only for a deliberate test outside the session.
-5. **Dry run on a past date:** fill `test_time` with a Berlin time such as `2026-11-05 15:40`. The run works on a scratch copy of the database, picks as if it were that moment (entry = the 1-minute price then, so the date must be within Yahoo's ~30 days of 1-minute history), fills whatever +1/+5/+20 closes exist by now, shows the report in the run summary and uploads the scratch database as an artifact. Nothing is committed. Note that Claude's web search still sees today's news, so the picks themselves are not a fair backtest; this tests the mechanics. Costs one API call (~$0.70).
+5. **Dry run on a past date:** fill `test_time` with a date such as `2026-11-05` (= 09:40 New York that day) or a Berlin time such as `2026-11-05 15:40`. The run works on a scratch copy of the database, picks as if it were that moment (entry = the 1-minute price then, so the date must be within Yahoo's ~30 days of 1-minute history), fills whatever +1/+5/+20 closes exist by now, shows the report in the run summary and uploads the scratch database as an artifact. Nothing is committed. Note that Claude's web search still sees today's news, so the picks themselves are not a fair backtest; this tests the mechanics. Costs one API call (~$0.70).
 
 ## Local development
 
@@ -117,7 +117,7 @@ sqlite3 data/picks.db "select key, value from config"
 | `FORCE` | (unset) | `1` lifts the US-session and holiday checks. Testing only. |
 | `PRICES_ALWAYS` | (unset) | `1` runs the price step even if it already ran today (manual workflow runs set it). |
 | `PICKS_DB` | `data/picks.db` | Path of the SQLite database. |
-| `TEST_NOW` | (unset) | Berlin `YYYY-MM-DD HH:MM`: pick as if it were that moment. Refused unless `PICKS_DB` points to a scratch copy. |
+| `TEST_NOW` | (unset) | `YYYY-MM-DD` (09:40 New York) or Berlin `YYYY-MM-DD HH:MM`: pick as if it were that moment. Refused unless `PICKS_DB` points to a scratch copy. |
 
 ## Design choices
 

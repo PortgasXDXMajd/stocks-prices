@@ -23,7 +23,7 @@ on:
         required: false
         default: false
       test_time:
-        description: "Dry run on a past date, Berlin 'YYYY-MM-DD HH:MM' (e.g. 2026-11-05 15:40). Uses a scratch copy of the database; nothing is committed."
+        description: "Dry run on a past date: 'YYYY-MM-DD' (= 09:40 New York that day) or Berlin 'YYYY-MM-DD HH:MM'. Uses a scratch copy of the database; nothing is committed."
         type: string
         required: false
         default: ""
