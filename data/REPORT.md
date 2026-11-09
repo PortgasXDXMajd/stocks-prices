@@ -1,6 +1,6 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-07T17:53:17Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-09T23:33:28Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
@@ -31,4 +31,6 @@ _No picks yet._
 
 ## Last 15 runs
 
-_No runs yet._
+| Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-11-09-prices | prices | 2026-11-09T23:33:27Z | — | 0 | — | — | 2/2 symbols, 18 bars; 0 pick(s) updated; no picks | — |
