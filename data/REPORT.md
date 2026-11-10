@@ -1,10 +1,10 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-10T00:42:01Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-10T21:00:11Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
-Picks logged: **0**
+Picks logged: **1**
 
 | After | Picks with result | Went up | Average change | Benchmark average | Average vs benchmark | Best | Worst |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
@@ -16,7 +16,9 @@ Picks logged: **0**
 
 Each cell is the change from the entry price to the official close 1, 5 and 20 US trading days after the pick day, with that close in brackets. The benchmark column is the same change for QQQ (stocks) or BTC-USD (crypto). — means not available yet.
 
-_No picks yet._
+| Picked (Berlin) | Symbol | Type | Entry price | +1 day | +5 days | +20 days | Benchmark +1 / +5 / +20 | Status | Reason | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
+| 2026-11-10 22:00 | **AAON** | stock | 75.01 | — | — | — | QQQ — / — / — | open | [Q3 rev +84% to record \$707M on BASX data-center cooling +218%; FY26 growth guide raised to 72-75% from 55-60%; William Blair sees \$100. Beat-and-raise drift setup.](https://finance.yahoo.com/news/aaon-soars-earnings-beat-raised-214529919.html) | — |
 
 ## Rules, in short
 
@@ -33,5 +35,6 @@ _No picks yet._
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| 2026-11-10-prices | prices | 2026-11-10T00:42:00Z | — | 0 | — | — | 2/2 symbols, 16 bars; 0 pick(s) updated; no picks | — |
+| 2026-11-10-prices | prices | 2026-11-10T21:00:11Z | — | 1 | — | — | 3/3 symbols, 14 bars; 1 pick(s) updated; open 1 | — |
+| 2026-11-10-picks | picks | 2026-11-10T20:59:07Z | 1 | 1 | 121,035 / 3,460 | 10 | Hotter-than-expected October CPI pushed the 10-year yield back above 5% and hit tech hardest, with Nvidia down about 6%. The one pick is AAON's strong beat-and-raise; I passed on TTWO (risk of a sell-off at the GTA VI launch), GPN and CHTR (thin upside to analyst targets). | — |
 | 2026-11-09-prices | prices | 2026-11-09T23:33:27Z | — | 0 | — | — | 2/2 symbols, 18 bars; 0 pick(s) updated; no picks | — |
