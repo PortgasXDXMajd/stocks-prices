@@ -1,6 +1,6 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-11T21:31:03Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-12T01:28:29Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
@@ -35,6 +35,7 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-11-12-prices | prices | 2026-11-12T01:28:28Z | — | 0 | — | — | 3/3 symbols, 17 bars; 0 pick(s) updated; scored_1 1 | — |
 | 2026-11-11-prices | prices | 2026-11-11T21:31:01Z | — | 1 | — | — | 3/3 symbols, 17 bars; 1 pick(s) updated; scored_1 1 | — |
 | 2026-11-10-prices | prices | 2026-11-10T21:00:11Z | — | 1 | — | — | 3/3 symbols, 14 bars; 1 pick(s) updated; open 1 | — |
 | 2026-11-10-picks | picks | 2026-11-10T20:59:07Z | 1 | 1 | 121,035 / 3,460 | 10 | Hotter-than-expected October CPI pushed the 10-year yield back above 5% and hit tech hardest, with Nvidia down about 6%. The one pick is AAON's strong beat-and-raise; I passed on TTWO (risk of a sell-off at the GTA VI launch), GPN and CHTR (thin upside to analyst targets). | — |
