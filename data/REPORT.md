@@ -1,6 +1,6 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-18T01:34:28Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-19T01:05:09Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
@@ -9,7 +9,7 @@ Picks logged: **1**
 | After | Picks with result | Went up | Average change | Benchmark average | Average vs benchmark | Best | Worst |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
 | +1 day | 1 | 1 of 1 (100%) | +1.76% | +2.31% | -0.55% | AAON +1.76% (11-10) | AAON +1.76% (11-10) |
-| +5 days | 0 | — | — | — | — | — | — |
+| +5 days | 1 | 1 of 1 (100%) | +4.93% | -2.65% | +7.58% | AAON +4.93% (11-10) | AAON +4.93% (11-10) |
 | +20 days | 0 | — | — | — | — | — | — |
 
 ## All picks (newest first)
@@ -18,7 +18,7 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 
 | Picked (Berlin) | Symbol | Type | Entry price | +1 day | +5 days | +20 days | Benchmark +1 / +5 / +20 | Status | Reason | Notes |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| 2026-11-10 22:00 | **AAON** | stock | 75.01 | +1.76% (76.33) | — | — | QQQ +2.31% / — / — | scored_1 | [Q3 rev +84% to record \$707M on BASX data-center cooling +218%; FY26 growth guide raised to 72-75% from 55-60%; William Blair sees \$100. Beat-and-raise drift setup.](https://finance.yahoo.com/news/aaon-soars-earnings-beat-raised-214529919.html) | no AAON close for 2026-11-17<br>no QQQ close for 2026-11-17 |
+| 2026-11-10 22:00 | **AAON** | stock | 75.01 | +1.76% (76.33) | +4.93% (78.71) | — | QQQ +2.31% / -2.65% / — | scored_5 | [Q3 rev +84% to record \$707M on BASX data-center cooling +218%; FY26 growth guide raised to 72-75% from 55-60%; William Blair sees \$100. Beat-and-raise drift setup.](https://finance.yahoo.com/news/aaon-soars-earnings-beat-raised-214529919.html) | — |
 
 ## Rules, in short
 
@@ -35,6 +35,7 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-11-19-prices | prices | 2026-11-19T01:05:07Z | — | 1 | — | — | 3/3 symbols, 34 bars; 1 pick(s) updated; scored_5 1 | — |
 | 2026-11-18-prices | prices | 2026-11-18T01:34:27Z | — | 1 | — | — | 3/3 symbols, 31 bars; 1 pick(s) updated; scored_1 1 | — |
 | 2026-11-17-prices | prices | 2026-11-17T00:48:13Z | — | 0 | — | — | 3/3 symbols, 28 bars; 0 pick(s) updated; scored_1 1 | — |
 | 2026-11-16-prices | prices | 2026-11-16T23:29:53Z | — | 0 | — | — | 3/3 symbols, 28 bars; 0 pick(s) updated; scored_1 1 | — |
