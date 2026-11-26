@@ -1,6 +1,6 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-25T00:07:27Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-26T00:59:37Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
@@ -35,6 +35,7 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-11-26-prices | prices | 2026-11-26T00:59:35Z | — | 0 | — | — | 3/3 symbols, 51 bars; 0 pick(s) updated; scored_5 1 | — |
 | 2026-11-25-prices | prices | 2026-11-25T00:07:26Z | — | 0 | — | — | 3/3 symbols, 48 bars; 0 pick(s) updated; scored_5 1 | — |
 | 2026-11-24-prices | prices | 2026-11-24T01:52:17Z | — | 0 | — | — | 3/3 symbols, 45 bars; 0 pick(s) updated; scored_5 1 | — |
 | 2026-11-21-prices | prices | 2026-11-21T00:45:58Z | — | 0 | — | — | 3/3 symbols, 40 bars; 0 pick(s) updated; scored_5 1 | — |
@@ -49,4 +50,3 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 | 2026-11-11-prices | prices | 2026-11-11T21:31:01Z | — | 1 | — | — | 3/3 symbols, 17 bars; 1 pick(s) updated; scored_1 1 | — |
 | 2026-11-10-prices | prices | 2026-11-10T21:00:11Z | — | 1 | — | — | 3/3 symbols, 14 bars; 1 pick(s) updated; open 1 | — |
 | 2026-11-10-picks | picks | 2026-11-10T20:59:07Z | 1 | 1 | 121,035 / 3,460 | 10 | Hotter-than-expected October CPI pushed the 10-year yield back above 5% and hit tech hardest, with Nvidia down about 6%. The one pick is AAON's strong beat-and-raise; I passed on TTWO (risk of a sell-off at the GTA VI launch), GPN and CHTR (thin upside to analyst targets). | — |
-| 2026-11-09-prices | prices | 2026-11-09T23:33:27Z | — | 0 | — | — | 2/2 symbols, 18 bars; 0 pick(s) updated; no picks | — |
