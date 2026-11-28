@@ -1,6 +1,6 @@
 # Morning Picks: how did the picks do?
 
-_Generated 2026-11-27T00:00:24Z. Paper experiment only: nothing is ever traded._
+_Generated 2026-11-28T00:32:53Z. Paper experiment only: nothing is ever traded._
 
 ## Summary
 
@@ -35,6 +35,7 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 
 | Run | Kind | Started (UTC) | Picks | Rows updated | Tokens in / out | Searches | Summary | Issues |
 | --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| 2026-11-28-prices | prices | 2026-11-28T00:32:52Z | — | 0 | — | — | 3/3 symbols, 55 bars; 0 pick(s) updated; scored_5 1 | — |
 | 2026-11-27-prices | prices | 2026-11-27T00:00:23Z | — | 0 | — | — | 3/3 symbols, 52 bars; 0 pick(s) updated; scored_5 1 | — |
 | 2026-11-26-prices | prices | 2026-11-26T00:59:35Z | — | 0 | — | — | 3/3 symbols, 51 bars; 0 pick(s) updated; scored_5 1 | — |
 | 2026-11-25-prices | prices | 2026-11-25T00:07:26Z | — | 0 | — | — | 3/3 symbols, 48 bars; 0 pick(s) updated; scored_5 1 | — |
@@ -49,4 +50,3 @@ Each cell is the change from the entry price to the official close 1, 5 and 20 U
 | 2026-11-13-prices | prices | 2026-11-13T00:09:42Z | — | 0 | — | — | 3/3 symbols, 20 bars; 0 pick(s) updated; scored_1 1 | — |
 | 2026-11-12-prices | prices | 2026-11-12T01:28:28Z | — | 0 | — | — | 3/3 symbols, 17 bars; 0 pick(s) updated; scored_1 1 | — |
 | 2026-11-11-prices | prices | 2026-11-11T21:31:01Z | — | 1 | — | — | 3/3 symbols, 17 bars; 1 pick(s) updated; scored_1 1 | — |
-| 2026-11-10-prices | prices | 2026-11-10T21:00:11Z | — | 1 | — | — | 3/3 symbols, 14 bars; 1 pick(s) updated; open 1 | — |
